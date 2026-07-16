@@ -7,7 +7,8 @@ import uuid
 from typing import Any, AsyncIterator
 
 from lania_agent_runtime.context import RuntimeContext
-from lania_agent_runtime.executor import LLMExecutor, LLMExecutorConfig
+from lania_agent_runtime.executor import LLMExecutor
+from lania_agent_runtime.models import LLMExecutorConfig
 from lania_agent_runtime.hooks import (
     AFTER_LLM,
     AFTER_STEP,
@@ -21,14 +22,21 @@ from lania_agent_runtime.hooks import (
     HookRegistry,
 )
 from lania_agent_runtime.memory.base import MemoryService
+from lania_agent_runtime.memory.hooks import MemoryCommitHook, MemoryRecallHook
 from lania_agent_runtime.models import (
+    BudgetSnapshot,
+    ContextPayloadSnapshot,
+    ErrorStateSnapshot,
     LLMResponse,
     LLMUsage,
+    PauseStateSnapshot,
+    PlanStep,
     RunResult,
     RuntimeStatus,
     SessionSnapshot,
     StreamEvent,
     ToolCall,
+    WorkingMemorySnapshot,
 )
 
 
@@ -68,6 +76,23 @@ class AgentRuntime:
             self._config = LLMExecutorConfig()
 
         self._start_time: float | None = None
+
+        # 自动注册记忆 Hook (如果 MemoryService 有存储后端)
+        has_episodic = (
+            self._memory.working_store is not None
+            or self._memory.episodic_store is not None
+        )
+        if has_episodic:
+            self._hooks.transform(
+                BEFORE_STEP,
+                MemoryRecallHook(self._memory),
+                name="memory_recall",
+            )
+            self._hooks.transform(
+                AFTER_STEP,
+                MemoryCommitHook(self._memory),
+                name="memory_commit",
+            )
 
     # ── Properties ──
 
@@ -127,8 +152,12 @@ class AgentRuntime:
         # Append user message
         self._ctx.append_message({"role": "user", "content": user_input})
 
+        # 将 user_id 注入 services, 使 Hook 可访问
+        if user_id:
+            self._ctx.set_services({**self._ctx.services, "user_id": user_id})
+
         # Run the step loop
-        await self._step_loop()
+        await self._step_loop(user_id=user_id)
 
         # Collect result
         return self._collect_result()
@@ -166,8 +195,12 @@ class AgentRuntime:
         # Append user message
         self._ctx.append_message({"role": "user", "content": user_input})
 
+        # 将 user_id 注入 services, 使 Hook 可访问
+        if user_id:
+            self._ctx.set_services({**self._ctx.services, "user_id": user_id})
+
         # Run streaming step loop
-        async for event in self._step_loop_stream():
+        async for event in self._step_loop_stream(user_id=user_id):
             yield event
 
         yield StreamEvent(
@@ -181,13 +214,91 @@ class AgentRuntime:
     # ── Session Control ──
 
     async def destroy(self) -> None:
-        """Destroy the session, trigger session_end hooks."""
+        """Destroy the session, trigger session_end hooks.
+
+        设计文档 §七: session_end 顺序为 Observer → Transform.
+        """
         session_data = {"session_id": self._session_id}
+        # 1. Observer: Evaluation, Audit, Observability (只读)
+        await self._hooks.run_observers(SESSION_END, session_data, self._ctx)
+        # 2. Transform: Session cleanup, persistence (可修改)
         session_data = await self._hooks.run_transformers(
             SESSION_END, session_data, self._ctx
         )
-        await self._hooks.run_observers(SESSION_END, session_data, self._ctx)
         self._ctx.set_status(RuntimeStatus.ENDED)
+
+    async def resume(self, user_id: str | None = None) -> RunResult:
+        """Resume a paused session (R2).
+
+        设计文档: agent-runtime-design.md §九-3
+        Runtime 需支持 step 级别的暂停/恢复协议.
+        恢复时清空 pause_state, 从上次断点继续 step loop.
+        """
+        if self._ctx.status != RuntimeStatus.PAUSED:
+            msg = f"Cannot resume: session is {self._ctx.status.value}, not paused"
+            raise RuntimeError(msg)
+
+        # 清空暂停状态
+        self._ctx.pause_state.is_paused = False
+        self._ctx.pause_state.pending_approvals = []
+        resume_token = self._ctx.pause_state.resume_token
+        self._ctx.pause_state.resume_token = None
+
+        # 丢弃工作记忆检查点 (暂停时保存的)
+        await self._memory.discard_checkpoint(self._session_id)
+
+        # 恢复运行状态
+        self._ctx.set_status(RuntimeStatus.RUNNING)
+
+        # 如果有 resume_token, 注入 services
+        if resume_token:
+            self._ctx.set_services({
+                **self._ctx.services,
+                "resume_token": resume_token,
+            })
+
+        # 继续 step loop (会重试被暂停的 tool call 等)
+        await self._step_loop(user_id=user_id)
+
+        return self._collect_result()
+
+    async def resume_stream(
+        self,
+        user_id: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Resume a paused session with streaming.
+
+        设计文档: agent-runtime-design.md §九-3
+        """
+        if self._ctx.status != RuntimeStatus.PAUSED:
+            msg = f"Cannot resume: session is {self._ctx.status.value}, not paused"
+            raise RuntimeError(msg)
+
+        # 清空暂停状态
+        self._ctx.pause_state.is_paused = False
+        self._ctx.pause_state.pending_approvals = []
+        resume_token = self._ctx.pause_state.resume_token
+        self._ctx.pause_state.resume_token = None
+
+        await self._memory.discard_checkpoint(self._session_id)
+        self._ctx.set_status(RuntimeStatus.RUNNING)
+
+        if resume_token:
+            self._ctx.set_services({
+                **self._ctx.services,
+                "resume_token": resume_token,
+            })
+
+        async for event in self._step_loop_stream(user_id=user_id):
+            yield event
+
+        yield StreamEvent(
+            type="done",
+            metadata={
+                "session_id": self._session_id,
+                "content": self._get_last_content(),
+            },
+        )
 
     def get_session_state(self) -> SessionSnapshot:
         """Get current session snapshot for debugging."""
@@ -206,7 +317,7 @@ class AgentRuntime:
 
     # ── Internal Step Loop ──
 
-    async def _step_loop(self) -> None:
+    async def _step_loop(self, user_id: str | None = None) -> None:
         """Internal step loop (non-streaming)."""
         max_iterations = self._ctx.budget.step_limit or 10
 
@@ -220,29 +331,24 @@ class AgentRuntime:
 
             step_data = await self._hooks.run_transformers(BEFORE_STEP, step_data, self._ctx)
 
-            # ── Memory recall: populate ContextPayload ──
-            last_content = self._ctx.messages[-1].get("content", "") if self._ctx.messages else ""
-            recall_payload = await self._memory.recall(
-                session_id=self._session_id,
-                query=last_content,
-            )
-            if recall_payload.memories:
-                self._ctx.context_payload.memories = recall_payload.memories
-            if recall_payload.rag_documents:
-                self._ctx.context_payload.rag_documents = recall_payload.rag_documents
-            if recall_payload.concepts:
-                self._ctx.context_payload.concepts = recall_payload.concepts
-            if recall_payload.entity_profile:
-                self._ctx.context_payload.entity_profile = recall_payload.entity_profile
+            # ── Router: 决定下一步骤 (设计文档 §七) ──
+            if self._hooks.has_router():
+                next_step_id = await self._hooks.run_router(self._ctx)
+                if next_step_id == "end":
+                    break
+                # 非 "end" 的 step_id 表示继续 LLM 或其他执行路径
 
-            # ── before_llm: intercept → transform ──
+            # ── before_llm: transform → intercept (设计文档 §七) ──
             llm_data = {"messages": self._ctx.messages}
+            llm_data = await self._hooks.run_transformers(BEFORE_LLM, llm_data, self._ctx)
+
             intercept = await self._hooks.run_interceptors(BEFORE_LLM, llm_data, self._ctx)
             if intercept.action == "block":
                 self._ctx.set_error_state(intercept.reason)
                 break
 
-            llm_data = await self._hooks.run_transformers(BEFORE_LLM, llm_data, self._ctx)
+            # ── Runtime: serialize context_payload → messages[0] (设计文档 §5.3) ──
+            self._ctx.serialize_for_llm()
 
             # ── LLM Execute (via hook registry or direct executor) ──
             try:
@@ -260,10 +366,22 @@ class AgentRuntime:
                         model="mock",
                     )
             except Exception as e:
+                # ── on_error: Intercept → Router (设计文档 §八-#15) ──
+                # Intercept 决定 retry / skip / degrade / escalate
+                error_data = {"error": str(e), "step_index": self._ctx.step_index}
+                intercept = await self._hooks.run_interceptors(
+                    ON_ERROR, error_data, self._ctx
+                )
+                # ── 自动 checkpoint: 错误时保存工作记忆 ──
+                await self._save_checkpoint(user_id)
+                # Error Router: 决定下一步 stepId
+                if intercept.action == "block":
+                    self._ctx.set_error_state(intercept.reason or str(e))
+                    break
+                # 仍运行 observers 记录错误 (日志/审计)
                 await self._hooks.run_observers(
                     ON_ERROR, {"error": str(e), "step_index": self._ctx.step_index}, self._ctx
                 )
-                # Error Router: retry / skip / degrade
                 try:
                     next_step = await self._hooks.run_router(self._ctx)
                     if next_step == "retry":
@@ -339,6 +457,8 @@ class AgentRuntime:
                             "approval_id": intercept.approval_id,
                         })
                         self._ctx.set_status(RuntimeStatus.PAUSED)
+                        # ── 自动 checkpoint: 暂停时保存工作记忆 ──
+                        await self._save_checkpoint(user_id)
                         return
 
                     try:
@@ -346,17 +466,17 @@ class AgentRuntime:
                     except Exception as e:
                         result = {"error": str(e)}
 
-                    # after_tool: intercept → transform → observe
+                    # after_tool: transform → intercept → observe (设计文档 §七)
+                    result = await self._hooks.run_transformers(
+                        AFTER_TOOL, {"result": result, "tool_call": tool_call}, self._ctx
+                    )
+
                     intercept = await self._hooks.run_interceptors(
                         AFTER_TOOL, {"result": result, "tool_call": tool_call}, self._ctx
                     )
                     if intercept.action == "block":
                         self._ctx.set_error_state(intercept.reason)
                         result = {"blocked": intercept.reason}
-
-                    result = await self._hooks.run_transformers(
-                        AFTER_TOOL, {"result": result, "tool_call": tool_call}, self._ctx
-                    )
 
                     self._ctx.append_message({
                         "role": "tool",
@@ -378,20 +498,6 @@ class AgentRuntime:
 
             self._ctx.increment_step()
 
-            # ── Commit to memory ──
-            if len(self._ctx.messages) >= 2:
-                last_user = None
-                last_assistant = None
-                for m in reversed(self._ctx.messages):
-                    if m.get("role") == "assistant" and last_assistant is None:
-                        last_assistant = m.get("content", "")
-                    elif m.get("role") == "user" and last_user is None:
-                        last_user = m.get("content", "")
-                    if last_user and last_assistant:
-                        break
-                if last_user and last_assistant:
-                    await self._memory.commit(self._session_id, None, last_user, last_assistant)
-
             # ── Router: determine next step ──
             if self._hooks.has_router():
                 next_step = await self._hooks.run_router(self._ctx)
@@ -405,7 +511,7 @@ class AgentRuntime:
                 if response.finish_reason == "tool_calls":
                     continue
 
-    async def _step_loop_stream(self) -> AsyncIterator[StreamEvent]:
+    async def _step_loop_stream(self, user_id: str | None = None) -> AsyncIterator[StreamEvent]:
         """Internal step loop with streaming."""
         max_iterations = self._ctx.budget.step_limit or 10
 
@@ -419,29 +525,23 @@ class AgentRuntime:
 
             step_data = await self._hooks.run_transformers(BEFORE_STEP, step_data, self._ctx)
 
-            # ── Memory recall: populate ContextPayload ──
-            last_content = self._ctx.messages[-1].get("content", "") if self._ctx.messages else ""
-            recall_payload = await self._memory.recall(
-                session_id=self._session_id,
-                query=last_content,
-            )
-            if recall_payload.memories:
-                self._ctx.context_payload.memories = recall_payload.memories
-            if recall_payload.rag_documents:
-                self._ctx.context_payload.rag_documents = recall_payload.rag_documents
-            if recall_payload.concepts:
-                self._ctx.context_payload.concepts = recall_payload.concepts
-            if recall_payload.entity_profile:
-                self._ctx.context_payload.entity_profile = recall_payload.entity_profile
+            # ── Router: 决定下一步骤 (设计文档 §七) ──
+            if self._hooks.has_router():
+                next_step_id = await self._hooks.run_router(self._ctx)
+                if next_step_id == "end":
+                    break
 
-            # ── before_llm: intercept → transform ──
+            # ── before_llm: transform → intercept (设计文档 §七) ──
             llm_data = {"messages": self._ctx.messages}
+            llm_data = await self._hooks.run_transformers(BEFORE_LLM, llm_data, self._ctx)
+
             intercept = await self._hooks.run_interceptors(BEFORE_LLM, llm_data, self._ctx)
             if intercept.action == "block":
                 yield StreamEvent(type="error", content=intercept.reason)
                 return
 
-            llm_data = await self._hooks.run_transformers(BEFORE_LLM, llm_data, self._ctx)
+            # ── Runtime: serialize context_payload → messages[0] (设计文档 §5.3) ──
+            self._ctx.serialize_for_llm()
 
             # ── LLM Execute with streaming ──
             full_content = ""
@@ -454,12 +554,13 @@ class AgentRuntime:
                     async for chunk in self._hooks.run_llm_executor(self._ctx):
                         full_content += chunk
                         yield StreamEvent(type="text", content=chunk)
-                elif hasattr(self._llm_executor, "execute_stream_collected"):
-                    # Collected streaming: yields text + assembles full response
-                    collector, response = (
-                        await self._llm_executor.execute_stream_collected(self._ctx)
-                    )
+                elif self._llm_executor:
+                    # Collected streaming: returns (collector, response)
+                    collector, response = await self._llm_executor.execute_stream(self._ctx)
                     full_content = collector.full_content
+                    # Stream text event
+                    if full_content:
+                        yield StreamEvent(type="text", content=full_content)
                     # Stream tool call events
                     for tc in collector.tool_calls:
                         yield StreamEvent(
@@ -472,11 +573,6 @@ class AgentRuntime:
                             name=tc["function"]["name"],
                             content=tc["function"]["arguments"],
                         )
-                elif self._llm_executor:
-                    # Simple text streaming
-                    async for chunk in self._llm_executor.execute_stream(self._ctx):
-                        full_content += chunk
-                        yield StreamEvent(type="text", content=chunk)
                 else:
                     # Mock streaming
                     content = self._ctx.messages[-1].get("content", "")
@@ -485,6 +581,8 @@ class AgentRuntime:
                         full_content += chunk
                         yield StreamEvent(type="text", content=chunk)
             except Exception as e:
+                # ── 自动 checkpoint: 错误时保存工作记忆 ──
+                await self._save_checkpoint(user_id)
                 yield StreamEvent(type="error", content=str(e))
                 return
 
@@ -529,20 +627,6 @@ class AgentRuntime:
 
             self._ctx.increment_step()
 
-            # ── Commit to memory ──
-            if len(self._ctx.messages) >= 2:
-                last_user = None
-                last_assistant = None
-                for m in reversed(self._ctx.messages):
-                    if m.get("role") == "assistant" and last_assistant is None:
-                        last_assistant = m.get("content", "")
-                    elif m.get("role") == "user" and last_user is None:
-                        last_user = m.get("content", "")
-                    if last_user and last_assistant:
-                        break
-                if last_user and last_assistant:
-                    await self._memory.commit(self._session_id, None, last_user, last_assistant)
-
             # ── Router: determine next step ──
             if self._hooks.has_router():
                 next_step = await self._hooks.run_router(self._ctx)
@@ -550,6 +634,60 @@ class AgentRuntime:
                     break
             else:
                 break  # Single step default for streaming
+
+    # ── Checkpoint ──
+
+    async def _save_checkpoint(self, user_id: str | None = None) -> None:
+        """保存工作记忆检查点 (供错误恢复/暂停恢复使用)."""
+        try:
+            # 从 RuntimeContext 提取完整状态 (M5)
+            cp = self._ctx.context_payload
+            snapshot = WorkingMemorySnapshot(
+                session_id=self._session_id,
+                step_index=self._ctx.step_index,
+                messages=list(self._ctx.messages),
+                message_count=len(self._ctx.messages),
+                total_tokens=self._ctx.budget.token_used,
+                status=self._ctx.status.value,
+                context_payload=ContextPayloadSnapshot(
+                    system_prompt=cp.system_prompt,
+                    memories=[dict(m) for m in cp.memories],
+                    rag_documents=[dict(d) for d in cp.rag_documents],
+                    injected_context=list(cp.injected_context),
+                    history=[dict(h) for h in cp.history],
+                    tone_instruction=cp.tone_instruction,
+                    concepts=[dict(c) for c in cp.concepts],
+                    entity_profile=dict(cp.entity_profile),
+                ),
+                budget=BudgetSnapshot(
+                    token_used=self._ctx.budget.token_used,
+                    token_limit=self._ctx.budget.token_limit,
+                    step_count=self._ctx.budget.step_count,
+                    step_limit=self._ctx.budget.step_limit,
+                    cost_in_cents=self._ctx.budget.cost_in_cents,
+                ),
+                pause_state=PauseStateSnapshot(
+                    is_paused=self._ctx.pause_state.is_paused,
+                    pending_approvals=list(self._ctx.pause_state.pending_approvals),
+                    resume_token=self._ctx.pause_state.resume_token,
+                ),
+                error_state=ErrorStateSnapshot(
+                    consecutive_errors=self._ctx.error_state.consecutive_errors,
+                    max_retries=self._ctx.error_state.max_retries,
+                    last_error=(
+                        {"type": "error", "message": self._ctx.error_state.last_error}
+                        if self._ctx.error_state.last_error else None
+                    ),
+                ),
+                plan=PlanStep(
+                    id="",
+                    description=str(self._ctx.plan) if self._ctx.plan else "",
+                ) if self._ctx.plan else None,
+                hook_states={},
+            )
+            await self._memory.checkpoint(snapshot)
+        except Exception:
+            pass  # checkpoint 失败不应影响主流程
 
     # ── Result Collection ──
 

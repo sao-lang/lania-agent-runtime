@@ -7,7 +7,8 @@ import pytest
 from openai import AsyncOpenAI
 
 from lania_agent_runtime.context import RuntimeContext
-from lania_agent_runtime.executor import LLMExecutor, LLMExecutorConfig
+from lania_agent_runtime.executor import LLMExecutor
+from lania_agent_runtime.models import LLMExecutorConfig
 
 
 @pytest.fixture
@@ -38,7 +39,7 @@ def _make_mock_usage(prompt=10, completion=5):
 
 
 def _make_executor(cfg: LLMExecutorConfig, mock_client: MagicMock) -> LLMExecutor:
-    return LLMExecutor(client=mock_client, config=cfg)
+    return LLMExecutor(config=cfg, client=mock_client)
 
 
 class TestExecutorRetry:

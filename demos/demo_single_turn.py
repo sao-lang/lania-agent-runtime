@@ -9,7 +9,8 @@ import asyncio
 
 from openai import AsyncOpenAI
 
-from lania_agent_runtime.executor import LLMExecutor, LLMExecutorConfig
+from lania_agent_runtime.executor import LLMExecutor
+from lania_agent_runtime.models import LLMExecutorConfig
 from lania_agent_runtime.runtime import AgentRuntime
 
 
@@ -28,7 +29,7 @@ async def main() -> None:
         api_key="sk-9c2fb6996ebf4387ba299d8048dd4070",
         base_url="https://api.deepseek.com",
     )
-    executor = LLMExecutor(client=client, config=config)
+    executor = LLMExecutor(config=config, client=client)
     runtime = AgentRuntime(
         session_id="demo-single",
         agent_id="demo-agent",

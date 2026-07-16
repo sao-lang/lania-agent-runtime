@@ -38,7 +38,16 @@ class TestRuntimeContext:
         ctx.deduct_budget(tokens=100, cost=5)
         assert ctx.budget.token_used == 100
         assert ctx.budget.cost_in_cents == 5
+        # step_count 由 increment_step 管理, deduct_budget 不修改
+        assert ctx.budget.step_count == 0
+
+    def test_increment_step_updates_budget_step_count(self) -> None:
+        """验证 step_count 在 increment_step 中递增 (设计文档 §七)."""
+        ctx = RuntimeContext()
+        ctx.deduct_budget(tokens=50)
+        ctx.increment_step()
         assert ctx.budget.step_count == 1
+        assert ctx.step_index == 1
 
     def test_set_agent_identity(self) -> None:
         ctx = RuntimeContext()

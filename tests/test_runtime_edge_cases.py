@@ -37,9 +37,19 @@ def mock_executor():  # noqa: ANN201
             )
 
         async def execute_stream(self, ctx):
+            from lania_agent_runtime.executor import AsyncStreamCollector
+
             content = ctx.messages[-1].get("content", "") if ctx.messages else ""
-            for chunk in [f"Echo: {content}"]:
-                yield chunk
+            text = f"Echo: {content}"
+            collector = AsyncStreamCollector()
+            collector._content_chunks = [text]
+            response = LLMResponse(
+                content=text,
+                usage=LLMUsage(prompt_tokens=10, completion_tokens=5),
+                finish_reason="stop",
+                model="mock",
+            )
+            return collector, response
 
     return MockExecutor()
 

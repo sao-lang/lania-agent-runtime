@@ -1,4 +1,8 @@
-"""Tests for executor streaming."""
+"""Tests for executor streaming.
+
+设计文档: llm-executor-design.md §2.2
+execute_stream() 统一返回 (AsyncStreamCollector, LLMResponse).
+"""
 
 from typing import Any, AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
@@ -7,7 +11,8 @@ import pytest
 from openai import AsyncOpenAI
 
 from lania_agent_runtime.context import RuntimeContext
-from lania_agent_runtime.executor import LLMExecutor, LLMExecutorConfig
+from lania_agent_runtime.executor import LLMExecutor
+from lania_agent_runtime.models import LLMExecutorConfig
 
 
 @pytest.fixture
@@ -29,7 +34,6 @@ class _MockAsyncIterator:
         return self
 
     async def __anext__(self) -> Any:
-
         if self._index >= len(self._chunks):
             raise StopAsyncIteration
         chunk = self._chunks[self._index]
@@ -42,11 +46,11 @@ class TestExecutorStream:
 
     def _make_executor(self, mock_client: MagicMock, **kwargs: Any) -> LLMExecutor:
         cfg = LLMExecutorConfig(**kwargs)
-        return LLMExecutor(client=mock_client, config=cfg)
+        return LLMExecutor(config=cfg, client=mock_client)
 
     @pytest.mark.asyncio
     async def test_execute_stream_text_only(self, ctx) -> None:
-        """Test streaming with text chunks only."""
+        """Test streaming returns (collector, response) with text content."""
         chunks = []
         for text in ["Hello", " ", "World", "!"]:
             delta = MagicMock()
@@ -72,10 +76,11 @@ class TestExecutorStream:
         mock_client.chat.completions.create = mock_create
 
         executor = self._make_executor(mock_client)
-        collected = []
-        async for chunk_text in executor.execute_stream(ctx):
-            collected.append(chunk_text)
-        assert "".join(collected) == "Hello World!"
+        collector, response = await executor.execute_stream(ctx)
+        assert collector.full_content == "Hello World!"
+        assert response.content == "Hello World!"
+        assert response.usage.prompt_tokens == 10
+        assert response.usage.completion_tokens == 5
 
     @pytest.mark.asyncio
     async def test_execute_stream_with_tool_calls(self, ctx) -> None:
@@ -89,14 +94,16 @@ class TestExecutorStream:
         chunk1 = MagicMock()
         chunk1.choices = [choice1]
 
-        # Tool call delta
-        delta2 = MagicMock()
-        delta2.content = None
+        # Tool call delta with id
         tc_delta = MagicMock()
+        tc_delta.index = 0
+        tc_delta.id = "call_1"
         func = MagicMock()
-        func.name = None
+        func.name = "get_weather"
         func.arguments = '{"city": "Bei'
         tc_delta.function = func
+        delta2 = MagicMock()
+        delta2.content = None
         delta2.tool_calls = [tc_delta]
         choice2 = MagicMock()
         choice2.delta = delta2
@@ -104,13 +111,15 @@ class TestExecutorStream:
         chunk2.choices = [choice2]
 
         # Tool call continuation
-        delta3 = MagicMock()
-        delta3.content = None
         tc_delta3 = MagicMock()
+        tc_delta3.index = 0
+        tc_delta3.id = None
         func3 = MagicMock()
         func3.name = None
         func3.arguments = 'jing"}'
         tc_delta3.function = func3
+        delta3 = MagicMock()
+        delta3.content = None
         delta3.tool_calls = [tc_delta3]
         choice3 = MagicMock()
         choice3.delta = delta3
@@ -128,12 +137,11 @@ class TestExecutorStream:
         mock_client.chat.completions.create = mock_create
 
         executor = self._make_executor(mock_client)
-        collected = []
-        async for chunk_text in executor.execute_stream(ctx):
-            collected.append(chunk_text)
-        full = "".join(collected)
-        assert "Let me check" in full
-        assert "Beijing" in full or "jing" in full
+        collector, response = await executor.execute_stream(ctx)
+        assert "Let me check" in collector.full_content
+        assert len(collector.tool_calls) == 1
+        assert collector.tool_calls[0]["function"]["arguments"] == '{"city": "Beijing"}'
+        assert len(response.tool_calls) == 1
 
     @pytest.mark.asyncio
     async def test_execute_stream_empty_choices(self, ctx) -> None:
@@ -150,10 +158,9 @@ class TestExecutorStream:
         mock_client.chat.completions.create = mock_create
 
         executor = self._make_executor(mock_client)
-        collected = []
-        async for chunk_text in executor.execute_stream(ctx):
-            collected.append(chunk_text)
-        assert collected == []
+        collector, response = await executor.execute_stream(ctx)
+        assert collector.full_content == ""
+        assert response.content == ""
 
     @pytest.mark.asyncio
     async def test_execute_stream_tools_schema(self, ctx) -> None:
@@ -176,7 +183,27 @@ class TestExecutorStream:
         mock_client.chat.completions.create = mock_create
 
         executor = self._make_executor(mock_client)
-        collected = []
-        async for chunk_text in executor.execute_stream(ctx):
-            collected.append(chunk_text)
-        assert "tool" in "".join(collected)
+        collector, response = await executor.execute_stream(ctx)
+        assert "tool" in collector.full_content
+
+    @pytest.mark.asyncio
+    async def test_execute_stream_collected_alias(self, ctx) -> None:
+        """Test execute_stream_collected delegates to execute_stream."""
+        delta = MagicMock()
+        delta.content = "Hello"
+        delta.tool_calls = None
+        choice = MagicMock()
+        choice.delta = delta
+        chunk = MagicMock()
+        chunk.choices = [choice]
+        last_chunk = MagicMock()
+        last_chunk.choices = []
+
+        mock_create = AsyncMock(return_value=_MockAsyncIterator([chunk, last_chunk]))
+        mock_client = MagicMock(spec=AsyncOpenAI)
+        mock_client.chat.completions.create = mock_create
+
+        executor = self._make_executor(mock_client)
+        collector, response = await executor.execute_stream_collected(ctx)
+        assert collector.full_content == "Hello"
+        assert response.content == "Hello"

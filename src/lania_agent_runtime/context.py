@@ -7,6 +7,7 @@ from typing import Any
 
 from lania_agent_runtime.models import (
     ContextPayload,
+    LLMExecutorConfig,
     RuntimeStatus,
 )
 
@@ -64,6 +65,12 @@ class RuntimeContext:
         self._error_state: ErrorState = ErrorState()
         self._agent_identity: dict | None = None
         self._tools_schema: list[dict] | None = None
+
+        # LLM executor 配置 (R3)
+        self._llm_config: LLMExecutorConfig | None = None
+
+        # 预序列化的 LLM 消息 (设计文档 §5.3 Runtime 负责 serialize)
+        self._llm_messages: list[dict] | None = None
 
         # External service references
         self._services: dict[str, Any] = {}
@@ -123,6 +130,15 @@ class RuntimeContext:
         return self._tools_schema
 
     @property
+    def llm_config(self) -> LLMExecutorConfig | None:
+        """LLM executor 配置 (R3).
+
+        设计文档: llm-executor-design.md §5.2
+        LLMExecutor._merge_params() 优先读取此字段覆盖默认配置.
+        """
+        return self._llm_config
+
+    @property
     def services(self) -> dict[str, Any]:
         return self._services
 
@@ -141,10 +157,12 @@ class RuntimeContext:
         self._plan = plan
 
     def deduct_budget(self, tokens: int = 0, cost: int = 0) -> None:
-        """Deduct from budget (after_tool/after_llm only)."""
+        """Deduct from budget (after_llm/after_tool only).
+
+        设计文档 §七: step_count 在 after_step 由 increment_step 更新.
+        """
         self._budget.token_used += tokens
         self._budget.cost_in_cents += cost
-        self._budget.step_count += 1
 
     def set_agent_identity(self, identity: dict | None) -> None:
         """Set agent identity (session_start only)."""
@@ -161,8 +179,12 @@ class RuntimeContext:
             self._error_state.consecutive_errors += 1
 
     def increment_step(self) -> None:
-        """Increment step index and record history."""
+        """Increment step index and record history.
+
+        设计文档 §七: after_step 中 Runtime 更新 stepIndex 和 budget.stepCount.
+        """
         self._step_index += 1
+        self._budget.step_count += 1
         self._step_history.append(
             {
                 "step_index": self._step_index,
@@ -175,15 +197,40 @@ class RuntimeContext:
         """Set external service references."""
         self._services = services
 
-    def serialize_messages(self) -> list[dict]:
-        """Serialize context_payload + history into the final messages array."""
-        system_content = self._context_payload.serialize_to_system_message()
-        serialized = [{"role": "system", "content": system_content}]
+    def set_llm_config(self, config: LLMExecutorConfig | None) -> None:
+        """Set LLM executor configuration override (R3).
 
-        # Append existing messages (skipping system message if any)
+        设计文档: llm-executor-design.md §5.2
+        允许 Hook 在 before_llm 阶段动态修改 LLM 调用参数.
+        """
+        self._llm_config = config
+
+    @property
+    def llm_messages(self) -> list[dict] | None:
+        """预序列化的 LLM 消息 (由 Runtime 在 LLM Execute 前设置)."""
+        return self._llm_messages
+
+    def serialize_for_llm(self) -> list[dict]:
+        """序列化 context_payload + history 为 LLM 最终消息数组.
+
+        设计文档 §5.3: Runtime 在 before_llm Intercept 后调用此方法,
+        将结果传递给 LLM Execute, 而非由 Executor 内部自行序列化.
+        """
+        system_content = self._context_payload.serialize_to_system_message()
+        self._llm_messages = [{"role": "system", "content": system_content}]
+
         for msg in self._messages:
             if msg.get("role") == "system":
                 continue
-            serialized.append(dict(msg))
+            self._llm_messages.append(dict(msg))
 
-        return serialized
+        return self._llm_messages
+
+    def serialize_messages(self) -> list[dict]:
+        """序列化 context_payload + history (兼容旧接口).
+
+        如果已通过 serialize_for_llm() 预序列化, 优先返回缓存结果.
+        """
+        if self._llm_messages is not None:
+            return self._llm_messages
+        return self.serialize_for_llm()

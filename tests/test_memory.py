@@ -467,8 +467,8 @@ class TestMemoryService:
     @pytest.mark.asyncio
     async def test_increment_semantic_mention(self, store) -> None:
         node_id = await store.create_semantic_node("Python", "concept", "Language")
-        await store.increment_semantic_mention(node_id)
-        await store.increment_semantic_mention(node_id)
+        await store.increment_mention(node_id)
+        await store.increment_mention(node_id)
 
         rows = store._conn.execute(
             "SELECT mention_count FROM semantic_node WHERE id = ?", (node_id,)

@@ -9,13 +9,13 @@ from __future__ import annotations
 import asyncio
 import json
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Any, AsyncIterator
+from typing import Any
 
 from openai import APIError, APITimeoutError, AsyncOpenAI, RateLimitError
 
 from lania_agent_runtime.context import RuntimeContext
-from lania_agent_runtime.models import LLMResponse, LLMUsage, ToolCall
+from lania_agent_runtime.models import LLMExecutorConfig, LLMResponse, LLMUsage, ToolCall
+from lania_agent_runtime.provider import LLMProvider, OpenAIProvider
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -155,25 +155,6 @@ class AsyncStreamCollector:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  Configuration
-# ═══════════════════════════════════════════════════════════════
-
-
-@dataclass
-class LLMExecutorConfig:
-    """Configuration for LLMExecutor."""
-
-    model: str = "deepseek-chat"
-    temperature: float = 0.7
-    max_tokens: int = 4096
-    timeout: float = 120.0
-    max_retries: int = 3
-    retry_backoff_base: float = 1.0
-    retry_backoff_max: float = 30.0
-    extra_headers: dict[str, str] = field(default_factory=dict)
-
-
-# ═══════════════════════════════════════════════════════════════
 #  Abstract Base
 # ═══════════════════════════════════════════════════════════════
 
@@ -182,8 +163,10 @@ class LLMExecutorBase(ABC):
     """
     Abstract base class for LLM executors.
 
-    All concrete executors (OpenAI, Anthropic, etc.) must implement
-    ``execute()`` and optionally ``execute_stream()``.
+    设计文档: llm-executor-design.md §2.1
+    All concrete executors must implement ``execute()``.
+    Streaming-capable executors implement ``execute_stream()``
+    returning ``(AsyncStreamCollector, LLMResponse)``.
     """
 
     @abstractmethod
@@ -191,8 +174,14 @@ class LLMExecutorBase(ABC):
         """Execute non-streaming LLM call."""
         ...
 
-    async def execute_stream(self, ctx: RuntimeContext) -> AsyncIterator[str]:
-        """Execute streaming LLM call. Yields content chunks."""
+    async def execute_stream(
+        self, ctx: RuntimeContext,
+    ) -> tuple[AsyncStreamCollector, LLMResponse]:
+        """Execute streaming LLM call.
+
+        设计文档: llm-executor-design.md §2.2
+        统一返回 (collector, response) 元组.
+        """
         raise NotImplementedError
 
 
@@ -204,10 +193,11 @@ class LLMExecutorBase(ABC):
 class LLMExecutor(LLMExecutorBase):
     """LLM Executor using OpenAI-compatible API.
 
-    The provider (api_key, api_base) is configured via the injected
-    ``client``, keeping the executor provider-agnostic.
+    设计文档: llm-executor-design.md §4.1
+    内部构造 ``AsyncOpenAI`` 客户端(config.api_key / config.api_base),
+    或通过 provider / client 参数注入。
 
-    Supports:
+    支持:
       - Non-streaming and streaming execution
       - Tool/function calling
       - Exponential backoff retry with configurable timeout
@@ -215,11 +205,37 @@ class LLMExecutor(LLMExecutorBase):
 
     def __init__(
         self,
-        client: AsyncOpenAI,
         config: LLMExecutorConfig | None = None,
+        *,
+        client: AsyncOpenAI | None = None,
+        provider: LLMProvider | None = None,
     ) -> None:
-        self._client = client
         self._config = config or LLMExecutorConfig()
+        self._provider = provider
+
+        if client is not None:
+            # 向后兼容: 外部注入 client (测试/迁移场景)
+            self._client = client
+        elif provider is not None:
+            # 通过 Provider 抽象获取底层 client
+            if isinstance(provider, OpenAIProvider):
+                self._client = provider.client
+            else:
+                self._client = AsyncOpenAI(
+                    api_key=self._config.api_key or None,
+                    base_url=self._config.api_base or None,
+                    timeout=self._config.timeout,
+                )
+        else:
+            # 设计文档 §4.1: 从 config 内部构造 AsyncOpenAI 客户端
+            kwargs: dict[str, Any] = {
+                "api_key": self._config.api_key or None,
+                "base_url": self._config.api_base or None,
+                "timeout": self._config.timeout,
+            }
+            if self._config.extra_headers:
+                kwargs["extra_headers"] = self._config.extra_headers
+            self._client = AsyncOpenAI(**kwargs)
 
     # ── Public API ──
 
@@ -257,36 +273,13 @@ class LLMExecutor(LLMExecutorBase):
                     model=params.model,
                 ) from last_error
 
-    async def execute_stream(self, ctx: RuntimeContext) -> AsyncIterator[str]:
-        """Execute streaming LLM call. Yields content chunks."""
-        messages = self._extract_messages(ctx)
-        params = self._merge_params(ctx)
-        tools_schema = self._get_tools_schema(ctx)
-
-        kwargs = self._build_kwargs(params, messages, tools_schema, stream=True)
-
-        stream = await self._client.chat.completions.create(**kwargs)
-
-        async for chunk in stream:
-            if chunk.choices and len(chunk.choices) > 0:
-                delta = chunk.choices[0].delta
-                if delta and delta.content:
-                    yield delta.content
-                # Yield tool call argument deltas
-                if delta and delta.tool_calls:
-                    for tc in delta.tool_calls:
-                        if tc.function and tc.function.arguments:
-                            yield tc.function.arguments
-
-    async def execute_stream_collected(
+    async def execute_stream(
         self, ctx: RuntimeContext,
     ) -> tuple[AsyncStreamCollector, LLMResponse]:
-        """
-        Execute streaming LLM call and collect into a full response.
+        """Execute streaming LLM call.
 
-        Returns:
-          (collector, response) where collector has per-chunk data
-          and response is the assembled LLMResponse.
+        设计文档: llm-executor-design.md §2.2
+        统一返回 (collector, response) — 收集全部 chunk 后组装完整响应.
         """
         messages = self._extract_messages(ctx)
         params = self._merge_params(ctx)
@@ -301,10 +294,15 @@ class LLMExecutor(LLMExecutorBase):
 
         assembled = collector.assemble()
         assembled.model = params.model
-        if not hasattr(assembled.usage, "model") and hasattr(assembled, "model"):
-            pass
         response = self._to_response(assembled, params.model)
         return collector, response
+
+    # 向后兼容别名
+    async def execute_stream_collected(
+        self, ctx: RuntimeContext,
+    ) -> tuple[AsyncStreamCollector, LLMResponse]:
+        """Deprecated: use execute_stream() instead."""
+        return await self.execute_stream(ctx)
 
     # ── Internal methods ──
 
@@ -370,19 +368,28 @@ class LLMExecutor(LLMExecutorBase):
     def _merge_params(self, ctx: RuntimeContext) -> LLMExecutorConfig:
         """Merge context config over base config.
 
-        The ctx.llm_config is not currently defined on RuntimeContext,
-        so this returns a copy of the base config for now.
-        Extension point: when RuntimeContext gains an ``llm_config``
-        field, override values from it here.
+        设计文档: llm-executor-design.md §4.1
+        优先使用 ctx.llm_config 中的覆盖值, 回退到 self._config.
         """
+        ctx_cfg = ctx.llm_config
+        if ctx_cfg is None:
+            return LLMExecutorConfig(
+                model=self._config.model,
+                temperature=self._config.temperature,
+                max_tokens=self._config.max_tokens,
+                timeout=self._config.timeout,
+                max_retries=self._config.max_retries,
+                retry_backoff_base=self._config.retry_backoff_base,
+                retry_backoff_max=self._config.retry_backoff_max,
+            )
         return LLMExecutorConfig(
-            model=self._config.model,
-            temperature=self._config.temperature,
-            max_tokens=self._config.max_tokens,
-            timeout=self._config.timeout,
-            max_retries=self._config.max_retries,
-            retry_backoff_base=self._config.retry_backoff_base,
-            retry_backoff_max=self._config.retry_backoff_max,
+            model=ctx_cfg.model or self._config.model,
+            temperature=ctx_cfg.temperature if ctx_cfg.temperature != 0.7 else self._config.temperature,  # noqa: E501
+            max_tokens=ctx_cfg.max_tokens or self._config.max_tokens,
+            timeout=ctx_cfg.timeout or self._config.timeout,
+            max_retries=ctx_cfg.max_retries or self._config.max_retries,
+            retry_backoff_base=ctx_cfg.retry_backoff_base or self._config.retry_backoff_base,
+            retry_backoff_max=ctx_cfg.retry_backoff_max or self._config.retry_backoff_max,
         )
 
     def _get_tools_schema(self, ctx: RuntimeContext) -> list[dict[str, Any]] | None:

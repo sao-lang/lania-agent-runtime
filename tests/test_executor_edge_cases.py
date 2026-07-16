@@ -6,7 +6,8 @@ from unittest.mock import MagicMock
 from openai import AsyncOpenAI
 
 from lania_agent_runtime.context import RuntimeContext
-from lania_agent_runtime.executor import LLMExecutor, LLMExecutorConfig
+from lania_agent_runtime.executor import LLMExecutor
+from lania_agent_runtime.models import LLMExecutorConfig
 
 
 class TestLLMExecutorEdgeCases:
@@ -15,20 +16,29 @@ class TestLLMExecutorEdgeCases:
     def _make_executor(self, **kwargs: Any) -> tuple[LLMExecutorConfig, AsyncOpenAI, LLMExecutor]:
         cfg = LLMExecutorConfig(**kwargs)
         client = MagicMock(spec=AsyncOpenAI)
-        executor = LLMExecutor(client=client, config=cfg)
+        executor = LLMExecutor(config=cfg, client=client)
         return cfg, client, executor
 
-    def test_init_raises_without_client(self) -> None:
-        try:
-            LLMExecutor()  # type: ignore
-            assert False, "Should have raised TypeError"
-        except TypeError:
-            pass
+    def test_init_without_client(self) -> None:
+        """设计文档 §4.1: 无 client 时内部构造 AsyncOpenAI 客户端."""
+        executor = LLMExecutor(config=LLMExecutorConfig(api_key="test-key"))
+        assert executor._client is not None
+        assert executor._config.model == "deepseek-chat"
+        assert executor._config.api_key == "test-key"
 
     def test_client_is_used_directly(self) -> None:
         client = MagicMock(spec=AsyncOpenAI)
         executor = LLMExecutor(client=client)
         assert executor._client is client
+
+    def test_provider_injection(self) -> None:
+        """Test provider injection via OpenAIProvider."""
+        from lania_agent_runtime.provider import OpenAIProvider
+
+        provider = OpenAIProvider(api_key="test-key")
+        executor = LLMExecutor(config=LLMExecutorConfig(), provider=provider)
+        assert executor._provider is provider
+        assert executor._client is provider.client
 
     def test_serialize_message_tool_call_fallback(self) -> None:
         _, _, executor = self._make_executor()

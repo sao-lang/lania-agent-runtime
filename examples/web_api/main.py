@@ -22,7 +22,8 @@ from fastapi.responses import StreamingResponse
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
-from lania_agent_runtime.executor import LLMExecutor, LLMExecutorConfig
+from lania_agent_runtime.executor import LLMExecutor
+from lania_agent_runtime.models import LLMExecutorConfig
 from lania_agent_runtime.memory.base import MemoryService
 from lania_agent_runtime.memory.sqlite_store import SQLiteMemoryStore
 from lania_agent_runtime.runtime import AgentRuntime

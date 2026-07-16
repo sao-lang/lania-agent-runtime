@@ -13,8 +13,8 @@ from lania_agent_runtime.executor import (
     LLMExecutionError,
     LLMExecutor,
     LLMExecutorBase,
-    LLMExecutorConfig,
 )
+from lania_agent_runtime.models import LLMExecutorConfig
 
 
 class TestLLMExecutorConfig:
@@ -58,12 +58,12 @@ class TestLLMExecutor:
         executor = LLMExecutor(client=client)
         assert executor._config.model == "deepseek-chat"
 
-    def test_init_raises_without_client(self) -> None:
-        try:
-            LLMExecutor()  # type: ignore
-            assert False, "Should have raised TypeError"
-        except TypeError:
-            pass
+    def test_init_without_client(self) -> None:
+        """设计文档 §4.1: 无 client 时内部构造 AsyncOpenAI 客户端."""
+        executor = LLMExecutor(config=LLMExecutorConfig(api_key="test-key"))
+        assert executor._client is not None
+        assert executor._config.model == "deepseek-chat"
+        assert executor._config.api_key == "test-key"
 
     def test_extract_messages(self) -> None:
         ctx = RuntimeContext(session_id="s1", agent_id="a1")
