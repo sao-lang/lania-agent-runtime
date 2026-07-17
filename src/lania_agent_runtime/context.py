@@ -216,6 +216,14 @@ class RuntimeContext:
         设计文档 §5.3: Runtime 在 before_llm Intercept 后调用此方法,
         将结果传递给 LLM Execute, 而非由 Executor 内部自行序列化.
         """
+        # 如果 context_payload 没有 system_prompt, 从 messages 中回填
+        # (避免 run(system_prompt=...) 传入的 system prompt 被静默丢弃)
+        if not self._context_payload.system_prompt:
+            for msg in self._messages:
+                if msg.get("role") == "system":
+                    self._context_payload.system_prompt = msg.get("content", "")
+                    break
+
         system_content = self._context_payload.serialize_to_system_message()
         self._llm_messages = [{"role": "system", "content": system_content}]
 

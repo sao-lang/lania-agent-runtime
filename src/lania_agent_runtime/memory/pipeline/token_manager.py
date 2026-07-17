@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from lania_agent_runtime.models import ContextPayload, PriorityHints
+from lania_agent_runtime.models import ContextPayload
 
 
 class TokenManager:
