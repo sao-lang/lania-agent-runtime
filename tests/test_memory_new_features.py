@@ -2,14 +2,12 @@
 
 import pytest
 
-from lania_agent_runtime.memory.base import (
-    MemoryService,
-)
+from lania_agent_runtime.memory import GenericMemoryStore, MemoryService
+from lania_agent_runtime.memory.backends import SQLiteBackend
 from lania_agent_runtime.memory.compression import CompressionManager
 from lania_agent_runtime.memory.conflict import ConflictResolver
 from lania_agent_runtime.memory.eviction import EvictionManager
 from lania_agent_runtime.memory.gate import MemoryCommitGate
-from lania_agent_runtime.memory.sqlite_store import SQLiteMemoryStore
 from lania_agent_runtime.models import (
     EpisodicMemoryEntry,
     GateDecision,
@@ -20,7 +18,7 @@ from lania_agent_runtime.models import (
 
 @pytest.fixture
 async def store():  # noqa: ANN201
-    s = SQLiteMemoryStore()
+    s = GenericMemoryStore(SQLiteBackend())
     await s.initialize()
     yield s
     await s.close()
@@ -211,7 +209,7 @@ class TestSQLiteMemoryStoreNewMethods:
     @pytest.mark.asyncio
     async def test_get_neighbors_no_conn(self) -> None:
         """无连接时获取邻居."""
-        store = SQLiteMemoryStore()
+        store = GenericMemoryStore(SQLiteBackend())
         neighbors = await store.get_neighbors("any")
         assert neighbors == []
 
@@ -749,7 +747,7 @@ class TestAcquireLock:
 
     @pytest.mark.asyncio
     async def test_acquire_lock_no_conn(self) -> None:
-        store = SQLiteMemoryStore()
+        store = GenericMemoryStore(SQLiteBackend())
         locked = await store.acquire_lock("u1")
         assert locked is False
 

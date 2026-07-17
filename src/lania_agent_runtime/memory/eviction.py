@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from lania_agent_runtime.memory.base import EpisodicStore, SemanticStore
+from lania_agent_runtime.memory.interfaces import EpisodicStore, SemanticStore
 
 
 class EvictionManager:

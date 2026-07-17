@@ -2,13 +2,14 @@
 
 import pytest
 
-from lania_agent_runtime.memory.sqlite_store import SQLiteMemoryStore
+from lania_agent_runtime.memory import GenericMemoryStore
+from lania_agent_runtime.memory.backends import SQLiteBackend
 from lania_agent_runtime.models import EpisodicMemoryEntry, WorkingMemorySnapshot
 
 
 @pytest.fixture
 async def store():  # noqa: ANN201  # type: ignore[no-untyped-def]
-    s = SQLiteMemoryStore()
+    s = GenericMemoryStore(SQLiteBackend())
     await s.initialize()
     yield s
     await s.close()
@@ -35,17 +36,12 @@ class TestMemoryEdgeCases:
         await store.upsert_entity_attribute("user", "u1", "age", 30, source_session="s1")
         await store.upsert_entity_attribute("user", "u1", "lang", "Python", source_session="s1")
 
-        import json
-
-        row = store._conn.execute(
-            "SELECT * FROM entity_memory WHERE entity_type = ? AND entity_key = ?",
-            ("user", "u1"),
-        ).fetchone()
-        attrs = json.loads(row["attributes"])
-        assert len(attrs) == 3
-        assert attrs["name"]["value"] == "Alice"
-        assert attrs["age"]["value"] == 30
-        assert attrs["lang"]["value"] == "Python"
+        profile = await store.get_entity_profile("user", "u1")
+        assert profile is not None
+        assert len(profile.attributes) == 3
+        assert profile.attributes["name"]["value"] == "Alice"
+        assert profile.attributes["age"]["value"] == 30
+        assert profile.attributes["lang"]["value"] == "Python"
 
     @pytest.mark.asyncio
     async def test_history_overflow_truncation(self, store) -> None:
@@ -58,14 +54,9 @@ class TestMemoryEdgeCases:
                 confidence=1.0,
                 source_session=f"s{i}",
             )
-        import json
-
-        row = store._conn.execute(
-            "SELECT * FROM entity_memory WHERE entity_type = ? AND entity_key = ?",
-            ("user", "u1"),
-        ).fetchone()
-        history = json.loads(row["history"])
-        assert len(history["counter"]) <= 20
+        profile = await store.get_entity_profile("user", "u1")
+        assert profile is not None
+        assert len(profile.history["counter"]) <= 20
 
     @pytest.mark.asyncio
     async def test_episodic_with_all_fields(self, store) -> None:
@@ -107,14 +98,14 @@ class TestMemoryEdgeCases:
 
     @pytest.mark.asyncio
     async def test_write_without_connection(self) -> None:
-        store = SQLiteMemoryStore()
+        store = GenericMemoryStore(SQLiteBackend())
         entry = EpisodicMemoryEntry(session_id="s1", turn_index=0, summary="test", token_count=5)
         entry_id = await store.write(entry)
         assert entry_id == entry.id  # Returns the id even without connection
 
     @pytest.mark.asyncio
     async def test_create_semantic_node_without_conn(self) -> None:
-        store = SQLiteMemoryStore()
+        store = GenericMemoryStore(SQLiteBackend())
         node_id = await store.create_semantic_node("test")
         assert node_id == ""
 
@@ -126,12 +117,12 @@ class TestMemoryEdgeCases:
 
     @pytest.mark.asyncio
     async def test_behavioral_pattern_without_conn(self) -> None:
-        store = SQLiteMemoryStore()
+        store = GenericMemoryStore(SQLiteBackend())
         await store.upsert_behavioral_pattern("u1", {"style": "test"})  # Should not crash
 
     @pytest.mark.asyncio
     async def test_upsert_entity_without_conn(self) -> None:
-        store = SQLiteMemoryStore()
+        store = GenericMemoryStore(SQLiteBackend())
         await store.upsert_entity_attribute("user", "u1", "name", "test")  # Should not crash
 
     @pytest.mark.asyncio
@@ -153,7 +144,7 @@ class TestMemoryEdgeCases:
 
     @pytest.mark.asyncio
     async def test_working_memory_without_conn(self) -> None:
-        store = SQLiteMemoryStore()
+        store = GenericMemoryStore(SQLiteBackend())
         snapshot = WorkingMemorySnapshot(session_id="s1")
         await store.save_working_memory(snapshot)
         assert await store.load_working_memory("s1") is None

@@ -1,8 +1,8 @@
 """
 Demo 1: Quickstart — Runtime + Memory in 30 Seconds.
 
-Shows the new composition pattern:
-  SQLiteStorageEngine → individual Stores → MemoryService → AgentRuntime
+Shows the simple API: just pick a storage backend.
+  SQLiteStore → MemoryService → AgentRuntime
 
 Flow:
   1. User says "Hi, I'm Alice, a data scientist"
@@ -20,15 +20,8 @@ import asyncio
 import uuid
 
 from lania_agent_runtime.hooks import BEFORE_STEP, HookRegistry
-from lania_agent_runtime.memory import MemoryService
-from lania_agent_runtime.memory.stores import (
-    SQLiteStorageEngine,
-    WorkingMemorySQLiteStore,
-    EpisodicMemorySQLiteStore,
-    EntityMemorySQLiteStore,
-    SemanticKnowledgeSQLiteStore,
-    BehavioralPatternSQLiteStore,
-)
+from lania_agent_runtime.memory import GenericMemoryStore, MemoryService
+from lania_agent_runtime.memory.backends import SQLiteBackend
 from lania_agent_runtime.models import LLMResponse, LLMUsage
 from lania_agent_runtime.runtime import AgentRuntime
 
@@ -81,28 +74,13 @@ async def trace_recall(data, ctx):
 # ── 主流程 ──
 
 async def run():
-    banner("Step 1: 创建存储引擎 + 各层 Store")
-    engine = SQLiteStorageEngine(":memory:")
-    await engine.initialize()
-
-    working = WorkingMemorySQLiteStore(engine)
-    episodic = EpisodicMemorySQLiteStore(engine)
-    entity = EntityMemorySQLiteStore(engine)
-    semantic = SemanticKnowledgeSQLiteStore(engine)
-    pattern = BehavioralPatternSQLiteStore(engine)
-
-    for s in [working, episodic, entity, semantic, pattern]:
-        await s.initialize()
-    info("引擎 + 5 层 Store", "✅ 已就绪 (共享同一连接)")
+    banner("Step 1: 创建 SQLite 存储")
+    store = GenericMemoryStore(SQLiteBackend(":memory:"))
+    await store.initialize()
+    info("存储后端", "✅ SQLiteStore (:memory:)")
 
     banner("Step 2: 组装 MemoryService + Runtime")
-    memory_svc = MemoryService(
-        working_store=working,
-        episodic_store=episodic,
-        entity_store=entity,
-        semantic_store=semantic,
-        pattern_store=pattern,
-    )
+    memory_svc = MemoryService(store=store)
     hooks = HookRegistry()
     hooks.observe(BEFORE_STEP, trace_recall, "trace")
     runtime = AgentRuntime(
@@ -133,12 +111,12 @@ async def run():
 
     banner("Step 4: 记忆系统检查")
 
-    profile = await entity.get_entity_profile("user", "alice")
+    profile = await store.get_entity_profile("user", "alice")
     if profile:
         info("Layer 3 实体画像",
              ", ".join(f"{k}={v['value']}" for k, v in profile.attributes.items()))
 
-    pattern_data = await pattern.get_behavioral_pattern("alice")
+    pattern_data = await store.get_behavioral_pattern("alice")
     if pattern_data:
         info("Layer 5 行为模式",
              ", ".join(f"{k}={v}" for k, v in pattern_data.patterns.items()))
@@ -164,7 +142,7 @@ async def run():
 
     await runtime.destroy()
     await runtime2.destroy()
-    await engine.close()
+    await store.close()
 
     banner("完成")
     info("全部流程", "Runtime + 5层记忆 + 跨 Session 召回 ✅")

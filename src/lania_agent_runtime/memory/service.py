@@ -1,7 +1,19 @@
-"""MemoryService: 5层记忆系统统一门面.
+"""MemoryService: 记忆系统统一门面.
 
-设计文档要求: memory-system-design.md §3.1
-接收5个独立Store, 实现可插拔组合.
+接收实现 MemoryStore 协议的存储后端, 自动路由到各层管线.
+用户只需关心"用什么存", 五层分解是内部实现细节.
+
+Usage:
+    # SQLite 存储
+    from lania_agent_runtime.memory import GenericMemoryStore
+    from lania_agent_runtime.memory.backends import SQLiteBackend
+    store = GenericMemoryStore(SQLiteBackend("memory.db"))
+    await store.initialize()
+    service = MemoryService(store=store)
+
+    # Redis 存储 (自定义)
+    class RedisBackend(StorageBackend): ...
+    service = MemoryService(store=GenericMemoryStore(RedisBackend()))
 """
 
 from __future__ import annotations
@@ -12,6 +24,7 @@ from lania_agent_runtime.memory.interfaces import (
     BehavioralStore,
     EntityStore,
     EpisodicStore,
+    MemoryStore,
     SemanticStore,
     WorkingMemoryStore,
 )
@@ -26,9 +39,22 @@ from lania_agent_runtime.models import (
 
 
 class MemoryService:
-    """5层记忆系统统一门面.
+    """记忆系统统一门面.
 
-    接收5个独立Store, 实现可插拔组合.
+    核心用法:
+        from lania_agent_runtime.memory import GenericMemoryStore
+        from lania_agent_runtime.memory.backends import SQLiteBackend
+        store = GenericMemoryStore(SQLiteBackend("memory.db"))
+        await store.initialize()
+        service = MemoryService(store=store)
+
+    也支持细粒度传入各层 Store (高级用法):
+        service = MemoryService(
+            working_store=...,
+            episodic_store=...,
+            entity_store=...,
+        )
+
     提供:
     - recall()  — 读取管线: 5层联合读取 + Token裁剪
     - commit()  — 写入管线: 5层联合写入 + 异步扇出
@@ -37,30 +63,27 @@ class MemoryService:
 
     def __init__(
         self,
+        store: MemoryStore | None = None,
+        *,
         working_store: WorkingMemoryStore | None = None,
         episodic_store: EpisodicStore | None = None,
         entity_store: EntityStore | None = None,
         semantic_store: SemanticStore | None = None,
         pattern_store: BehavioralStore | None = None,
-        *,
-        store: WorkingMemoryStore | None = None,
         llm_extractor: Callable[[str], list[EntityExtraction]] | None = None,
     ) -> None:
         """初始化 MemoryService.
 
-        设计推荐传5个独立 Store. 也支持旧 API: MemoryService(store=...)
-        当传入单 store 时, 使用 isinstance 检查自动分配到各层.
-
         Args:
-            working_store: 工作记忆存储 (Layer 1)
+            store: 主存储后端 (实现 MemoryStore 协议). 推荐用法.
+            working_store: 工作记忆存储 (Layer 1) — 高级用法, 覆盖 store 对应层.
             episodic_store: 情景记忆存储 (Layer 2)
             entity_store: 实体记忆存储 (Layer 3)
             semantic_store: 语义知识存储 (Layer 4)
             pattern_store: 行为模式存储 (Layer 5)
-            store: (向后兼容) 单 Store 模式
             llm_extractor: LLM实体提取回调(可选)
         """
-        # 向后兼容: 单 store 模式 → 自动分配到各层
+        # 主入口: 传入 MemoryStore → 自动分配各层
         if store is not None:
             working_store = working_store or (
                 store if isinstance(store, WorkingMemoryStore) else None
@@ -91,7 +114,7 @@ class MemoryService:
 
     @property
     def store(self) -> WorkingMemoryStore | None:
-        """(向后兼容) 返回第一个可用的存储."""
+        """返回第一个可用的存储后端."""
         return self._working_store or self._episodic_store or self._entity_store or self._semantic_store or self._pattern_store
 
     @property

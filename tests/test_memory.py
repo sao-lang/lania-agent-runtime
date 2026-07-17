@@ -2,14 +2,19 @@
 
 import pytest
 
-from lania_agent_runtime.memory.base import MemoryService
-from lania_agent_runtime.memory.sqlite_store import SQLiteMemoryStore
+from lania_agent_runtime.memory import GenericMemoryStore, MemoryService
+from lania_agent_runtime.memory.backends import SQLiteBackend
 from lania_agent_runtime.models import EpisodicMemoryEntry, WorkingMemorySnapshot
+
+
+def _make_store(db_path: str = ":memory:"):
+    """创建测试用 GenericMemoryStore."""
+    return GenericMemoryStore(SQLiteBackend(db_path))
 
 
 @pytest.fixture
 async def store():  # noqa: ANN201  # type: ignore[no-untyped-def]
-    s = SQLiteMemoryStore()
+    s = _make_store()
     await s.initialize()
     yield s
     await s.close()
@@ -26,17 +31,17 @@ class TestSQLiteMemoryStore:
 
     @pytest.mark.asyncio
     async def test_initialize_tables(self, store) -> None:
-        # Verify tables exist
-        tables = store._conn.execute(
+        # Verify tables exist (GenericMemoryStore + SQLiteBackend)
+        tables = store.backend._conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
         ).fetchall()
         table_names = [t["name"] for t in tables]
-        assert "working_memory" in table_names
-        assert "episodic_memory" in table_names
-        assert "entity_memory" in table_names
-        assert "semantic_node" in table_names
-        assert "semantic_edge" in table_names
-        assert "behavioral_pattern" in table_names
+        assert "kv_store" in table_names
+        assert "list_store" in table_names
+        assert "set_store" in table_names
+        assert "graph_node" in table_names
+        assert "graph_edge" in table_names
+        assert "lock_store" in table_names
 
     @pytest.mark.asyncio
     async def test_working_memory_save_and_load(self, store) -> None:
@@ -184,32 +189,20 @@ class TestSQLiteMemoryStore:
             source_session="s1",
         )
 
-        row = store._conn.execute(
-            "SELECT * FROM entity_memory WHERE entity_type = ? AND entity_key = ?",
-            ("user", "u1"),
-        ).fetchone()
-        assert row is not None
-        import json
-
-        attrs = json.loads(row["attributes"])
-        assert attrs["name"]["value"] == "Alice"
-        assert attrs["name"]["source_session"] == "s1"
+        profile = await store.get_entity_profile("user", "u1")
+        assert profile is not None
+        assert profile.attributes["name"]["value"] == "Alice"
+        assert profile.attributes["name"]["source_session"] == "s1"
 
     @pytest.mark.asyncio
     async def test_entity_upsert_existing(self, store) -> None:
         await store.upsert_entity_attribute("user", "u1", "name", "Alice", source_session="s1")
         await store.upsert_entity_attribute("user", "u1", "name", "Bob", source_session="s2")
 
-        row = store._conn.execute(
-            "SELECT * FROM entity_memory WHERE entity_type = ? AND entity_key = ?",
-            ("user", "u1"),
-        ).fetchone()
-        import json
-
-        attrs = json.loads(row["attributes"])
-        history = json.loads(row["history"])
-        assert attrs["name"]["value"] == "Bob"
-        assert len(history["name"]) == 2
+        profile = await store.get_entity_profile("user", "u1")
+        assert profile is not None
+        assert profile.attributes["name"]["value"] == "Bob"
+        assert len(profile.history["name"]) == 2
 
     @pytest.mark.asyncio
     async def test_semantic_node_create(self, store) -> None:
@@ -224,29 +217,20 @@ class TestSQLiteMemoryStore:
     async def test_behavioral_pattern_upsert(self, store) -> None:
         await store.upsert_behavioral_pattern("u1", {"style": "concise"})
 
-        row = store._conn.execute(
-            "SELECT * FROM behavioral_pattern WHERE user_id = ?", ("u1",)
-        ).fetchone()
-        assert row is not None
-        import json
-
-        patterns = json.loads(row["patterns"])
-        assert patterns["style"] == "concise"
-        assert row["version"] == 1
+        pattern = await store.get_behavioral_pattern("u1")
+        assert pattern is not None
+        assert pattern.patterns["style"] == "concise"
+        assert pattern.version == 1
 
     @pytest.mark.asyncio
     async def test_behavioral_pattern_update(self, store) -> None:
         await store.upsert_behavioral_pattern("u1", {"style": "concise"})
         await store.upsert_behavioral_pattern("u1", {"style": "detailed"})
 
-        row = store._conn.execute(
-            "SELECT * FROM behavioral_pattern WHERE user_id = ?", ("u1",)
-        ).fetchone()
-        assert row["version"] == 2
-        import json
-
-        patterns = json.loads(row["patterns"])
-        assert patterns["style"] == "detailed"
+        pattern = await store.get_behavioral_pattern("u1")
+        assert pattern is not None
+        assert pattern.version == 2
+        assert pattern.patterns["style"] == "detailed"
 
     @pytest.mark.asyncio
     async def test_episodic_entry_with_full_data(self, store) -> None:
@@ -277,11 +261,11 @@ class TestSQLiteMemoryStore:
     @pytest.mark.asyncio
     async def test_store_close(self, store) -> None:
         await store.close()
-        assert store._conn is None
+        assert store.backend._conn is None
 
     @pytest.mark.asyncio
     async def test_store_with_no_connection(self) -> None:
-        s = SQLiteMemoryStore()
+        s = _make_store()
         # Without init, operations should not crash
         assert await s.load_working_memory("s1") is None
         assert await s.recall_session("s1") == []
@@ -390,7 +374,7 @@ class TestMemoryService:
 
     @pytest.mark.asyncio
     async def test_get_entity_profile_no_conn(self) -> None:
-        store = SQLiteMemoryStore()
+        store = _make_store()
         profile = await store.get_entity_profile("user", "u1")
         assert profile is None
 
@@ -429,7 +413,7 @@ class TestMemoryService:
 
     @pytest.mark.asyncio
     async def test_search_semantic_no_conn(self) -> None:
-        store = SQLiteMemoryStore()
+        store = _make_store()
         nodes = await store.search_semantic("test")
         assert nodes == []
 
@@ -443,7 +427,7 @@ class TestMemoryService:
 
     @pytest.mark.asyncio
     async def test_create_semantic_edge_no_conn(self) -> None:
-        store = SQLiteMemoryStore()
+        store = _make_store()
         edge_id = await store.create_semantic_edge("a", "b", "related_to")
         assert edge_id == ""
 
@@ -470,10 +454,9 @@ class TestMemoryService:
         await store.increment_mention(node_id)
         await store.increment_mention(node_id)
 
-        rows = store._conn.execute(
-            "SELECT mention_count FROM semantic_node WHERE id = ?", (node_id,)
-        ).fetchone()
-        assert rows["mention_count"] == 2
+        node = await store.read_node(node_id)
+        assert node is not None
+        assert node.mention_count == 2
 
     @pytest.mark.asyncio
     async def test_get_behavioral_pattern(self, store) -> None:
@@ -492,7 +475,7 @@ class TestMemoryService:
 
     @pytest.mark.asyncio
     async def test_get_behavioral_pattern_no_conn(self) -> None:
-        store = SQLiteMemoryStore()
+        store = _make_store()
         pattern = await store.get_behavioral_pattern("u1")
         assert pattern is None
 

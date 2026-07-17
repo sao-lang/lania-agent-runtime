@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from lania_agent_runtime.memory.base import EntityStore
+from lania_agent_runtime.memory.interfaces import EntityStore
 
 
 class ConflictResolver:

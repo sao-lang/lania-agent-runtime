@@ -1,14 +1,13 @@
 """
-Demo 2: Multi-turn — Runtime + 5-Layer Memory Deep Dive.
+Demo 2: 多轮对话 — Runtime + 五层记忆深度演示.
 
-Shows the complete memory system architecture:
-  - Composition pattern: StorageEngine + individual Stores
-  - All 5 memory layers in action (working -> episodic -> entity -> semantic -> pattern)
-  - Cross-session recall with user identity
-  - Backend flexibility: swap WorkingMemoryFileStore for Layer 1
+展示完整记忆系统架构:
+  - 选择一个后端 (GenericMemoryStore + SQLiteBackend)
+  - 五层记忆全部运作 (工作 -> 情景 -> 实体 -> 语义 -> 行为)
+  - 跨 session 召回, 基于用户身份
 
-Usage:
-    uv run python demos/demo_multi_turn.py
+用法:
+    python demos/demo_multi_turn.py
 """
 
 from __future__ import annotations
@@ -17,20 +16,12 @@ import asyncio
 import uuid
 
 from lania_agent_runtime.hooks import BEFORE_STEP, HookRegistry
-from lania_agent_runtime.memory import MemoryService
-from lania_agent_runtime.memory.stores import (
-    SQLiteStorageEngine,
-    WorkingMemorySQLiteStore,
-    EpisodicMemorySQLiteStore,
-    EntityMemorySQLiteStore,
-    SemanticKnowledgeSQLiteStore,
-    BehavioralPatternSQLiteStore,
-    WorkingMemoryFileStore,
-)
+from lania_agent_runtime.memory import GenericMemoryStore, MemoryService
+from lania_agent_runtime.memory.backends import SQLiteBackend
 from lania_agent_runtime.models import LLMResponse, LLMUsage
 from lania_agent_runtime.runtime import AgentRuntime
 
-# ── Utilities ──
+# ── 辅助函数 ──
 
 
 def section(title: str) -> None:
@@ -48,7 +39,7 @@ def info(label: str, value: object = "", indent: int = 0) -> None:
 
 
 class MockExecutor:
-    """Mock LLM executor — no API key needed."""
+    """模拟 LLM 执行器 — 无需 API key."""
 
     def __init__(self) -> None:
         self.turn = 0
@@ -77,68 +68,44 @@ class MockExecutor:
 
 
 async def trace_before_step(data, ctx):
-    """Hook: log recall volume before each LLM call."""
+    """Hook: 每次 LLM 调用前打印召回量."""
     memories = ctx.context_payload.memories
     profile = ctx.context_payload.entity_profile
     tone = ctx.context_payload.tone_instruction
     parts = []
     if memories:
-        parts.append(f"{len(memories)} episodic memories")
+        parts.append(f"{len(memories)} 条情景记忆")
     if profile:
-        parts.append(f"{len(profile)} entity attributes")
+        parts.append(f"{len(profile)} 个实体属性")
     if tone:
-        parts.append(f"tone=「{tone}」")
+        parts.append(f"语气=「{tone}」")
     if parts:
-        print(f"    [before_step] -> LLM carries: {', '.join(parts)}")
+        print(f"    [before_step] -> LLM 携带: {', '.join(parts)}")
 
 
-# ── Main ──
+# ── 主流程 ──
 
 
 async def run():
-    section("Part 1: Architecture — Engine + Composable Stores")
+    section("第 1 部分: 架构 — GenericMemoryStore + SQLiteBackend")
 
-    # 1. Create shared engine
-    info("Creating SQLiteStorageEngine (shared connection)", ":memory:")
-    engine = SQLiteStorageEngine(":memory:")
-    await engine.initialize()
+    # 1. 创建存储 — 只需选择一个后端
+    store = GenericMemoryStore(SQLiteBackend(":memory:"))
+    await store.initialize()
+    info("存储后端", "GenericMemoryStore(SQLiteBackend) (:memory:)")
 
-    # 2. Create 5 stores sharing the same engine
-    info("Creating 5 layer Stores (sharing one engine instance)")
-    working = WorkingMemorySQLiteStore(engine)
-    episodic = EpisodicMemorySQLiteStore(engine)
-    entity = EntityMemorySQLiteStore(engine)
-    semantic = SemanticKnowledgeSQLiteStore(engine)
-    pattern = BehavioralPatternSQLiteStore(engine)
+    info("原语映射")
+    for line in [
+        "kv_set/get/delete/exists    → Layer 1 (覆盖写 + TTL)",
+        "list_push/range/len/remove  → Layer 2 (追加写入)",
+        "kv + set                    → Layer 3 (UPSERT)",
+        "graph_node/edge/neighbors   → Layer 4 (图)",
+        "kv + lock                   → Layer 5 (全量覆盖)",
+    ]:
+        info(line, indent=1)
 
-    for s in [working, episodic, entity, semantic, pattern]:
-        await s.initialize()
-    info("All stores", "table creation OK")
-
-    # 3. Optional: swap Layer 1 to file-based
-    info("Optional: replace Layer 1 with WorkingMemoryFileStore (file system)")
-    file_working = WorkingMemoryFileStore(".runtime/demo_working")
-    await file_working.initialize()
-    info("File store ready", "(Layer 1 is pluggable)")
-
-    arch = """Architecture:
-    SQLiteStorageEngine (shared connection)
-      +-- WorkingMemorySQLiteStore    (Layer 1: overwrite + TTL)
-      +-- EpisodicMemorySQLiteStore   (Layer 2: append-only)
-      +-- EntityMemorySQLiteStore     (Layer 3: UPSERT)
-      +-- SemanticKnowledgeSQLiteStore (Layer 4: graph)
-      +-- BehavioralPatternSQLiteStore (Layer 5: full overwrite)
-    """
-    print(f"\n{arch}")
-
-    # 4. Assemble facade
-    memory_svc = MemoryService(
-        working_store=working,
-        episodic_store=episodic,
-        entity_store=entity,
-        semantic_store=semantic,
-        pattern_store=pattern,
-    )
+    # 2. 组装门面
+    memory_svc = MemoryService(store=store)
 
     hooks = HookRegistry()
     hooks.observe(BEFORE_STEP, trace_before_step, "trace_recall")
@@ -151,10 +118,10 @@ async def run():
         hooks=hooks,
         memory=memory_svc,
     )
-    info("Runtime created", session_id)
+    info("Runtime 已创建", session_id)
 
     # ════════════════════════════════════════════════════════════════
-    section("Part 2: Multi-turn Dialogue — Auto Memory Commit")
+    section("第 2 部分: 多轮对话 — 自动记忆提交")
     # ════════════════════════════════════════════════════════════════
 
     turns = [
@@ -172,63 +139,63 @@ async def run():
             msg, user_id="alice", system_prompt="You are a helpful assistant."
         )
         print(f"    Assistant:  {result.content[:70]}")
-        info("Messages accumulated", f"{len(result.messages)}", indent=1)
+        info("消息累积", f"{len(result.messages)} 条", indent=1)
 
     # ════════════════════════════════════════════════════════════════
-    section("Part 3: Inspect Each Memory Layer")
+    section("第 3 部分: 检查各层记忆")
     # ════════════════════════════════════════════════════════════════
 
-    # Layer 1: Working Memory
-    info("Layer 1 - Working Memory")
-    wm = await working.load_working_memory(session_id)
+    # Layer 1: 工作记忆
+    info("Layer 1 - 工作记忆")
+    wm = await store.load_working_memory(session_id)
     if wm:
         info(
             f"step={wm.step_index}, tokens={wm.total_tokens}, status={wm.status}",
             indent=1,
         )
     else:
-        info("(not expired)", indent=1)
+        info("(未过期)", indent=1)
 
-    # Layer 2: Episodic Memory
-    info("Layer 2 - Episodic Memory")
-    entries = await episodic.recall_session(session_id)
-    info(f"Total {len(entries)} entries", indent=1)
+    # Layer 2: 情景记忆
+    info("Layer 2 - 情景记忆")
+    entries = await store.recall_session(session_id)
+    info(f"共 {len(entries)} 条记录", indent=1)
     for m in entries:
         detail = f"[#{m.turn_index}] {m.summary[:50]}"
         if m.topics:
             detail += f"  topics={m.topics}"
         info(detail, indent=2)
 
-    # Layer 3: Entity Profile
-    info("Layer 3 - Entity Profile")
-    profile = await entity.get_entity_profile("user", "alice")
+    # Layer 3: 实体画像
+    info("Layer 3 - 实体画像")
+    profile = await store.get_entity_profile("user", "alice")
     if profile:
         for attr, data in profile.attributes.items():
-            info(f"{attr} = {data['value']} (conf={data['confidence']})", indent=1)
+            info(f"{attr} = {data['value']} (置信度={data['confidence']})", indent=1)
     else:
-        info("(none)", indent=1)
+        info("(无)", indent=1)
 
-    # Layer 4: Semantic Knowledge — use full terms to match nodes
-    info("Layer 4 - Semantic Knowledge")
+    # Layer 4: 语义知识
+    info("Layer 4 - 语义知识")
     for term in ["Machine Learning", "Python", "Deep Learning"]:
-        nodes = await semantic.search_semantic(term, limit=3)
+        nodes = await store.search_semantic(term, limit=3)
         for n in nodes:
-            info(f"[{n.type}] {n.name} (mentioned {n.mention_count}x)", indent=1)
+            info(f"[{n.type}] {n.name} (提及 {n.mention_count} 次)", indent=1)
 
-    # Layer 5: Behavioral Pattern
-    info("Layer 5 - Behavioral Pattern")
-    pat = await pattern.get_behavioral_pattern("alice")
+    # Layer 5: 行为模式
+    info("Layer 5 - 行为模式")
+    pat = await store.get_behavioral_pattern("alice")
     if pat:
         for k, v in pat.patterns.items():
             info(f"{k} = {v}", indent=1)
     else:
-        info("(not yet converged)", indent=1)
+        info("(尚未收敛)", indent=1)
 
     # ════════════════════════════════════════════════════════════════
-    section("Part 4: Cross-Session Recall — Memory Persists")
+    section("第 4 部分: 跨 Session 召回 — 记忆持久化")
     # ════════════════════════════════════════════════════════════════
 
-    info("New session (same user: alice)")
+    info("新 session (同一用户: alice)")
     runtime2 = AgentRuntime(
         session_id=f"demo-{uuid.uuid4().hex[:8]}",
         agent_id="demo-agent",
@@ -244,7 +211,7 @@ async def run():
     info("Assistant", result.content[:80], indent=1)
 
     # ════════════════════════════════════════════════════════════════
-    section("Part 5: ContextPayload -> System Message")
+    section("第 5 部分: ContextPayload -> System Message")
     # ════════════════════════════════════════════════════════════════
 
     payload = await memory_svc.recall(
@@ -253,32 +220,31 @@ async def run():
         query="Machine Learning Python deployment",
     )
     sys_msg = payload.serialize_to_system_message()
-    info(f"Serialized to system message ({len(sys_msg)} chars)")
+    info(f"序列化为 system message ({len(sys_msg)} 字符)")
     for line in sys_msg.split("\n")[:10]:
-        info(line.strip() if line.strip() else "(blank)", indent=1)
+        info(line.strip() if line.strip() else "(空白)", indent=1)
     if sys_msg.count("\n") > 10:
-        info(f"... {sys_msg.count(chr(10)) + 1} lines total", indent=1)
+        info(f"... 共 {sys_msg.count(chr(10)) + 1} 行", indent=1)
 
     # ════════════════════════════════════════════════════════════════
-    section("Cleanup")
+    section("清理")
     # ════════════════════════════════════════════════════════════════
 
     await runtime.destroy()
     await runtime2.destroy()
-    await engine.close()
-    await file_working.close()
-    info("Runtime destroyed, connection closed")
+    await store.close()
+    info("Runtime 已销毁, 连接已关闭")
 
     # ════════════════════════════════════════════════════════════════
-    section("Summary")
+    section("总结")
     # ════════════════════════════════════════════════════════════════
 
     print(f"  Session:       {session_id}")
-    print(f"  Turns:         {len(turns)}")
-    print(f"  Episodic:      {len(entries)} entries")
-    print(f"  Entity attrs:  {len(profile.attributes) if profile else 0}")
-    print("  Architecture:  Interface + Composition (no inheritance)")
-    print("  Cross-session: OK")
+    print(f"  对话轮次:       {len(turns)}")
+    print(f"  情景记忆:       {len(entries)} 条")
+    print(f"  实体属性:       {len(profile.attributes) if profile else 0}")
+    print("  架构模式:       Interface + Composition (无继承)")
+    print("  跨 Session:     OK")
 
 
 if __name__ == "__main__":

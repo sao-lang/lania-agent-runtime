@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Callable
 
-from lania_agent_runtime.memory.base import EpisodicStore
+from lania_agent_runtime.memory.interfaces import EpisodicStore
 from lania_agent_runtime.models import (
     EpisodicMemoryEntry,
     MergeCandidate,

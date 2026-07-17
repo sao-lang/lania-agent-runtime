@@ -21,7 +21,7 @@ from lania_agent_runtime.hooks import (
     SESSION_START,
     HookRegistry,
 )
-from lania_agent_runtime.memory.base import MemoryService
+from lania_agent_runtime.memory import MemoryService
 from lania_agent_runtime.memory.hooks import MemoryCommitHook, MemoryRecallHook
 from lania_agent_runtime.models import (
     BudgetSnapshot,

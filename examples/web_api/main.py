@@ -24,8 +24,8 @@ from pydantic import BaseModel
 
 from lania_agent_runtime.executor import LLMExecutor
 from lania_agent_runtime.models import LLMExecutorConfig
-from lania_agent_runtime.memory.base import MemoryService
-from lania_agent_runtime.memory.sqlite_store import SQLiteMemoryStore
+from lania_agent_runtime.memory import GenericMemoryStore, MemoryService
+from lania_agent_runtime.memory.backends import SQLiteBackend
 from lania_agent_runtime.runtime import AgentRuntime
 
 # ── Request/Response Models ──
@@ -91,7 +91,7 @@ def _get_client() -> AsyncOpenAI:
 def _get_memory() -> MemoryService:
     global _default_memory
     if _default_memory is None:
-        store = SQLiteMemoryStore()
+        store = GenericMemoryStore(SQLiteBackend())
         import asyncio
 
         asyncio.get_event_loop().run_until_complete(store.initialize())

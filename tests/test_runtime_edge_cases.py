@@ -9,8 +9,8 @@ from lania_agent_runtime.hooks import (
     HookRegistry,
     InterceptResult,
 )
-from lania_agent_runtime.memory.base import MemoryService
-from lania_agent_runtime.memory.sqlite_store import SQLiteMemoryStore
+from lania_agent_runtime.memory import GenericMemoryStore, MemoryService
+from lania_agent_runtime.memory.backends import SQLiteBackend
 from lania_agent_runtime.models import (
     LLMResponse,
     LLMUsage,
@@ -320,7 +320,7 @@ class TestRuntimeErrorHandling:
 @pytest.mark.asyncio
 async def test_runtime_with_memory_service(mock_executor) -> None:  # noqa: ANN201
     """Test runtime with memory service integration."""
-    store = SQLiteMemoryStore()
+    store = GenericMemoryStore(SQLiteBackend())
     await store.initialize()
     memory = MemoryService(store=store)
 
