@@ -4,6 +4,8 @@ applyTo: '**/*.{go}'
 
 # Go Debug Rules
 
+> **AI Summary**: Go 调试：go vet 静态检查→race 检测并发→delve 单步调试→pprof 性能分析→table-driven 测试隔离。
+
 Go 调试核心策略：**静态检查 + 单元测试 + pprof 性能分析 + delve 运行时调试**。
 
 ## 调试脚本

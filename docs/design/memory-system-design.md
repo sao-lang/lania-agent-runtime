@@ -3,9 +3,31 @@
 > ⚠️ **本文档是 `agent-runtime-design.md` 的子文档**。阅读前请确保已理解主文档中的 **ContextPayload**（§5）和 **Hook 治理组件**（§8 #17 Memory Bank）。
 >
 > 关联文档：[`context-management-redesign.md`](context-management-redesign.md) — ContextManager 读取记忆
-> 主文档：[`agent-runtime-design.md`](agent-runtime-design.md)
+> 主文档：[`agent-runtime-design.md`](agent-runtime-design.md) — §6.5 `Pipeline[T]`（读写管线的通用抽象）→ §12 `PluggableComponent`（MemoryPersistence 的组件化集成）
 
 > 基于 agent-runtime-design.md 的五层记忆架构，定义存储接口、引擎选型、数据流和管理策略。
+
+---
+
+## 编码规范
+
+本文档涉及的所有代码实现必须遵循以下质量要求：
+
+### 注释
+- 所有公共接口（MemoryPersistence / MemoryService）和数据结构（EpisodicMemoryEntry / EntityMemoryEntry 等）必须包含完整的**中文 docstring**
+- 五层记忆的定义、各层存储行为、管线编排逻辑必须添加行内中文注释
+
+### 测试
+- 完整的**单元测试**（MemoryPersistence 的 4 个方法、各层 Store 适配器、Gate / Compressor / EvictionManager 管理策略）和**端到端测试**（MemoryService → MemoryPersistence 全链路读写）
+- 测试通过率：**100%**，覆盖率：**≥96%**（含分支覆盖）
+- 对后台任务（_safe_background_task）编写异常路径测试
+
+### Lint
+- **flake8** 零报错 + **Pylance** strict 模式零报错 + `ruff` 格式检查通过
+
+### 类型标注
+- 禁止使用 `Any`；所有记忆条目字段必须标注具体类型
+- `MemoryPersistence` 的 `get()` 返回 `bytes | None`，`put()` 接收 `bytes`——用户自定义实现必须遵循此契约
 
 ---
 
@@ -488,30 +510,70 @@ on after_step:
 
 ## 3. 存储接口设计
 
-### 3.1 统一外观接口
+### 3.1 MemoryPersistence —— 面向用户的最小持久化接口
 
-对上层（Runtime、治理组件）暴露统一的 `MemoryService`：
+用户只需实现 **4 个方法** 的 `MemoryPersistence` 接口，注入 `MemoryService` 后即可作为全部 5 层记忆的持久化后端。
 
 ```python
+from abc import ABC, abstractmethod
+
+
+class MemoryPersistence(ABC):
+    """
+    记忆持久化后端——用户实现此接口，MemoryService 内部使用。
+
+    只需实现 4 个基本方法，MemoryService 在内部处理序列化（dict ↔ bytes）、
+    键名约定和复杂查询逻辑，覆盖全部 5 层记忆的持久化需求。
+
+    MemoryService 内部使用如下键名约定（用户无需关心，仅供参考）：
+      wm:{session_id}                         → Working Memory
+      ep:{session_id}:{turn_index}:{entry_id}  → Episodic
+      en:{entity_type}:{entity_key}             → Entity
+      sn:{node_id}                             → Semantic Node
+      se:{source_id}:{target_id}:{relation}    → Semantic Edge
+      bp:{user_id}                             → Behavioral Pattern
+    """
+
+    @abstractmethod
+    async def get(self, key: str) -> bytes | None:
+        """读取原始字节数据。返回 None 表示键不存在。"""
+
+    @abstractmethod
+    async def put(self, key: str, value: bytes) -> None:
+        """写入原始字节数据（覆盖写）。"""
+
+    @abstractmethod
+    async def delete(self, key: str) -> None:
+        """删除单个键。"""
+
+    @abstractmethod
+    async def list_keys(self, prefix: str) -> list[str]:
+        """按前缀列出所有匹配的键（用于扫描和查询）。"""
+```
+
+### 3.2 统一外观接口
+
+`MemoryService` 对外暴露统一入口，内部将 5 层记忆的读写转化为对 `MemoryPersistence` 的键值操作。
+
+```python
+import json
+from typing import Any
+
+
 class MemoryService:
     """
     记忆系统统一外观。
-    上层只感知这一个入口，不感知内部五层的存储差异。
+    上层只感知这一个入口，不感知内部五层存储差异和序列化细节。
     """
 
-    def __init__(
-        self,
-        working_store: WorkingMemoryStore,
-        episodic_store: EpisodicMemoryStore,
-        entity_store: EntityMemoryStore,
-        semantic_store: SemanticKnowledgeStore,
-        pattern_store: BehavioralPatternStore,
-    ):
-        self._working = working_store
-        self._episodic = episodic_store
-        self._entity = entity_store
-        self._semantic = semantic_store
-        self._pattern = pattern_store
+    def __init__(self, persistence: MemoryPersistence):
+        """
+        Args:
+            persistence: 用户实现的持久化后端。
+                         MemoryService 内部通过 persistence.get/put/delete/list_keys
+                         操作全部 5 层记忆，无需用户处理序列化。
+        """
+        self._store = persistence
 
     # ── 读取管线 (before_step 调用) ──
 
@@ -616,7 +678,20 @@ class MemoryService:
         await self._working.delete(session_id)
 ```
 
-### 3.2 各层 Store 接口
+### 3.3 各层 Store —— 内部适配器
+
+> ⚠️ **以下 5 个 Store 接口是 MemoryService 的内部实现细节，用户不需要实现它们。**
+> 用户只需实现 `MemoryPersistence`（§3.1），MemoryService 内部将 Store 的复杂操作
+> 转化为对 MemoryPersistence 的键值读写 + 内存过滤。
+>
+> 以 `EpisodicMemoryStore.recall_session()` 为例的内部实现：
+> ```
+> keys = persistence.list_keys("ep:{session_id}:")  # 前缀扫描
+> for k in keys: data = persistence.get(k)            # 逐条读取
+> entries = [parse(d) for d in data if d]
+> entries.sort(key=lambda e: e.turn_index, reverse=True)
+> return entries[:limit]
+> ```
 
 #### WorkingMemoryStore (工作记忆)
 
@@ -962,7 +1037,10 @@ class BehavioralPatternStore(ABC):
 
 ---
 
-## 4. 存储引擎实现
+## 4. 存储引擎实现（基于 MemoryPersistence）
+
+MemoryService 不再需要 5 个独立的 Store 实现，所有持久化通过 `MemoryPersistence` 接口完成。
+框架默认提供 SQLite 实现，用户也可以注入任何自定义后端。
 
 ### 4.1 引擎选型矩阵
 
@@ -1696,43 +1774,168 @@ class MemoryCommitHook:
 
 ---
 
+## 8. 用户集成：实现自定义持久化
+
+### 8.1 实现 MemoryPersistence
+
+用户只需实现 4 个方法：
+
+```python
+from lania_agent_runtime.memory import MemoryPersistence
+
+
+class MyRedisBackend(MemoryPersistence):
+    """以 Redis 为例的自定义持久化后端。"""
+
+    def __init__(self, redis_client):
+        self._redis = redis_client
+
+    async def get(self, key: str) -> bytes | None:
+        data = await self._redis.get(key)
+        return data.encode() if data else None
+
+    async def put(self, key: str, value: bytes) -> None:
+        await self._redis.set(key, value.decode())
+
+    async def delete(self, key: str) -> None:
+        await self._redis.delete(key)
+
+    async def list_keys(self, prefix: str) -> list[str]:
+        cursor = 0
+        keys = []
+        while True:
+            cursor, batch = await self._redis.scan(cursor, match=f"{prefix}*")
+            keys.extend(batch)
+            if cursor == 0:
+                break
+        return keys
+```
+
+### 8.2 注入 MemoryService
+
+```python
+from lania_agent_runtime.memory import MemoryService
+
+# 方式 A：使用默认的 SQLite 实现（无需任何额外实现）
+memory = MemoryService()  # 自动使用 SQLitePersistence("./memory.db")
+
+# 方式 B：自定义后端
+redis_backend = MyRedisBackend(redis_client)
+memory = MemoryService(persistence=redis_backend)
+
+# 方式 C：文件系统实现（轻量调试用）
+import aiofiles
+import json
+
+class FileBackend(MemoryPersistence):
+    def __init__(self, base_path: str = "./.runtime/memory"):
+        self._base = Path(base_path)
+        self._base.mkdir(parents=True, exist_ok=True)
+
+    async def get(self, key: str) -> bytes | None:
+        path = self._base / f"{key.replace(':', '_')}.json"
+        if not path.exists():
+            return None
+        return await aiofiles.open(path, "rb").read() if path.exists() else None
+
+    async def put(self, key: str, value: bytes) -> None:
+        path = self._base / f"{key.replace(':', '_')}.json"
+        async with aiofiles.open(path, "wb") as f:
+            await f.write(value)
+
+    async def delete(self, key: str) -> None:
+        path = self._base / f"{key.replace(':', '_')}.json"
+        if path.exists():
+            path.unlink()
+
+    async def list_keys(self, prefix: str) -> list[str]:
+        pattern = f"{prefix.replace(':', '_')}"
+        return [str(p.stem) for p in self._base.glob(f"{pattern}*")]
+```
+
+### 8.3 注入 AgentRuntime
+
+```python
+from lania_agent_runtime import AgentRuntime
+from lania_agent_runtime.memory import MemoryService, MemoryPersistence
+
+# 1. 实现持久化
+class SQLitePersistence(MemoryPersistence):
+    """内置 SQLite 实现——框架默认提供，用户无需手写。"""
+    ...
+
+# 2. 构造 MemoryService
+memory = MemoryService(persistence=SQLitePersistence("./memory.db"))
+
+# 3. 注入 Runtime
+runtime = AgentRuntime(
+    llm_executor=my_executor,
+    services={"memory": memory},
+)
+
+# 4. Runtime 内部通过 Hook 自动调用 memory.recall() / memory.commit()
+```
+
+### 8.4 内置默认实现
+
+框架内置 `SQLitePersistence`，无需任何配置即可使用：
+
+```python
+memory = MemoryService()  # 等价于 MemoryService(persistence=SQLitePersistence("./memory.db"))
+```
+
+SQLitePersistence 使用单一 `memory.db` 文件 + 按前缀查询：
+
+```sql
+-- 建表示例
+CREATE TABLE memory_store (
+    key TEXT PRIMARY KEY,
+    value BLOB NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT
+);
+
+-- 查询：按前缀扫描
+SELECT key, value FROM memory_store WHERE key LIKE 'ep:session_123:%' ORDER BY key;
+
+-- 清理：TTL 过期
+DELETE FROM memory_store WHERE expires_at IS NOT NULL AND expires_at < datetime('now');
+```
+
+---
+
 ## 附录: 完整文件清单
 
 ```
 docs/memory-system-design.md     ← 本文档
-src/lania_agent_runtime/memory/
-├── __init__.py                  # 导出 MemoryService
-├── types.py                     # 所有数据类定义
-├── service.py                   # MemoryService 外观
-├── interfaces/
+src/memory/
+├── __init__.py                  # 导出 MemoryService, MemoryPersistence
+├── _types.py                    # 所有数据类定义
+├── _service.py                  # MemoryService 外观（接受 MemoryPersistence）
+├── _persistence.py              # ★ MemoryPersistence ABC（用户实现的唯一接口）
+├── _backends/
 │   ├── __init__.py
-│   ├── working_memory.py        # WorkingMemoryStore 接口
-│   ├── episodic_memory.py       # EpisodicMemoryStore 接口
-│   ├── entity_memory.py         # EntityMemoryStore 接口
-│   ├── semantic_knowledge.py    # SemanticKnowledgeStore 接口
-│   └── behavioral_pattern.py    # BehavioralPatternStore 接口
-├── stores/
+│   └── _sqlite.py               # ★ SQLitePersistence（默认实现）
+├── _stores/                     # 内部适配器（用户无需关心）
 │   ├── __init__.py
-│   ├── base_sqlite.py           # SQLiteStore 基类
-│   ├── working_file.py          # WorkingMemoryFileStore
-│   ├── episodic_sqlite.py       # EpisodicMemorySQLiteStore
-│   ├── entity_sqlite.py         # EntityMemorySQLiteStore
-│   ├── semantic_sqlite.py       # SemanticKnowledgeSQLiteStore
-│   └── pattern_sqlite.py        # BehavioralPatternSQLiteStore
-├── pipeline/
+│   ├── _working.py              # WorkingMemoryStore ← MemoryPersistence
+│   ├── _episodic.py             # EpisodicMemoryStore ← MemoryPersistence
+│   ├── _entity.py               # EntityMemoryStore ← MemoryPersistence
+│   ├── _semantic.py             # SemanticKnowledgeStore ← MemoryPersistence
+│   └── _pattern.py              # BehavioralPatternStore ← MemoryPersistence
+├── _pipeline/
 │   ├── __init__.py
-│   ├── commit.py                # 写入管线
-│   ├── recall.py                # 读取管线
-│   └── token_manager.py         # Token 裁剪
-├── management/
+│   ├── _commit.py               # 写入管线
+│   └── _recall.py               # 读取管线
+├── _management/
 │   ├── __init__.py
-│   ├── gate.py                  # MemoryCommitGate
-│   ├── compressor.py            # CompressionManager
-│   ├── eviction.py              # EvictionManager
-│   └── conflict.py              # ConflictResolver
-└── hooks/
+│   ├── _gate.py                 # MemoryCommitGate
+│   ├── _compressor.py           # CompressionManager
+│   ├── _eviction.py             # EvictionManager
+│   └── _conflict.py             # ConflictResolver
+└── _hooks/
     ├── __init__.py
-    ├── recall_hook.py           # MemoryRecallHook
-    ├── commit_hook.py           # MemoryCommitHook
-    └── cleanup_hook.py          # SessionCleanupHook
+    ├── _recall.py               # MemoryRecallHook
+    ├── _commit.py               # MemoryCommitHook
+    └── _cleanup.py              # SessionCleanupHook
 ```

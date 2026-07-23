@@ -6,4 +6,5 @@ applyTo: '**/CHANGELOG.md'
 
 - 版本号遵循 SemVer（major.minor.patch）
 - CHANGELOG 格式：`## [版本号] - YYYY-MM-DD`，按 Added / Changed / Fixed 分类
-- 发布前运行完整测试套件：`npm test`
+- 发布前运行完整测试套件
+- 版本号变更需同步更新项目配置文件（`package.json` / `pyproject.toml` / `Cargo.toml` 等）

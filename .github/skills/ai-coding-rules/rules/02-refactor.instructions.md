@@ -23,3 +23,4 @@ applyTo: 'packages/**/*.{ts,tsx}'
 - 潜在隐患
 
 > 普通 Bug 修复跳此流程，直接按 Base Rules 修复。
+> 重构不得改变外部行为，如涉及 API 行为变更须在方案中单独说明。

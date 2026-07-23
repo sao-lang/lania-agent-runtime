@@ -6,6 +6,28 @@
 > 关联文档：[`llm-executor-design.md`](llm-executor-design.md) — LLMExecutor 被编排组件调用
 > 主文档：[`agent-runtime-design.md`](agent-runtime-design.md)
 
+## 编码规范
+
+本文档涉及的所有代码实现必须遵循以下质量要求：
+
+### 注释
+- 所有 Hook 类（SelfCritiqueHook / ReplanHook / CritiqueInterceptor 等）必须包含完整的**中文 docstring**，说明注册点、触发时机、修改的 ctx 字段
+- CoT 的 prompt 模板必须包含中文注释说明其在 system message 中的插入位置
+
+### 测试
+- 完整的**单元测试**（每种 Hook 在 mock 环境下的行为验证）和**集成测试**（Hook 注册到 Runtime 后的全链路行为）
+- 测试通过率：**100%**，覆盖率：**≥96%**（含分支覆盖）
+- 对 ReplanHook 的 session 计数清理编写专项测试
+
+### Lint
+- **flake8** 零报错 + **Pylance** strict 模式零报错 + `ruff` 格式检查通过
+
+### 类型标注
+- 禁止使用 `Any`；`ApprovalPolicy.needs_approval()` 的返回类型必须标注为 `tuple[bool, str]`
+- Critique 相关 Hook 的输入输出类型必须与对应的 HookPoint 签名一致
+
+---
+
 ## 一、概念定位
 
 根据之前的分析，编排组件（Planner / Replan / Reflection / 自我批评 / 双重验证 / CoT / 子任务拆解）与基础设施组件（Memory / Context / LLMExecutor / Tools）的关系是 **"消费者与提供者"**：
@@ -470,19 +492,16 @@ Phase 4（高级模式）:
 ## 五、代码文件组织
 
 ```
-src/lania_agent_runtime/
-  ├── loops/                          # 新建
-  │   ├── __init__.py                 # 导出所有 LoopStrategy
-  │   ├── base.py                     # LoopStrategy ABC + LoopStrategyFactory
-  │   ├── react.py                    # ReActLoop
-  │   ├── plan_execute.py             # PlanExecuteLoop（含 Planner/Replan 内置）
-  │   └── workflow.py                 # WorkflowLoop + WorkflowDefinition + 节点类型
-  │
-  ├── hooks/                          # 已有，新增文件
-  │   ├── critique_hook.py            # SelfCritiqueHook / DualModelCritiqueHook
-  │   ├── replan_hook.py              # ReplanHook（作为 Hook 的变体）
-  │   └── approval_hook.py            # HumanApprovalInterceptor + ApprovalPolicy
-  │
-  ├── executor.py                     # CoT: LLMExecutorConfig.reasoning_instruction 字段
-  └── runtime.py                      # 使用 LoopStrategy 替代 _step_loop
+src/
+  └── loops/                          # 已移入 src/loops/
+      ├── __init__.py                 # 导出所有 LoopStrategy
+      ├── _base.py                    # LoopStrategy ABC
+      ├── _factory.py                 # LoopStrategyFactory
+      ├── _react.py                   # ReActLoop
+      ├── _plan_execute.py            # PlanExecuteLoop（含 Planner/Replan 内置）
+      └── _workflow.py                # WorkflowLoop + WorkflowDefinition + 节点类型
+
+  # 编排 Hook 移入 src/loops/_hooks/（与 LoopStrategy 耦合，不单独成目录）
+  # CoT 的 reasoning_instruction 字段在 src/llm/_config.py 中
+  # 编排组件不直接修改 runtime.py，通过 runtime.use() 集成
 ```

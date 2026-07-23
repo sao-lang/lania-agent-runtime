@@ -11,6 +11,70 @@
 
 ---
 
+## 编码规范
+
+本文档涉及的所有代码实现必须遵循以下质量要求：
+
+### 注释
+- 所有公共接口（ABC、Protocol、dataclass）必须包含完整的**中文 docstring**，说明用途、参数、返回值、异常
+- 复杂逻辑（>10 行）必须添加行内中文注释说明意图
+- 每个模块文件头部必须包含模块级别的中文注释说明职责
+
+### 测试
+- 必须包含完整的**单元测试**（覆盖每个公共方法）和**端到端测试**（覆盖模块间集成链路）
+- 测试通过率：**100%**
+- 测试覆盖率：**≥96%**（使用 `pytest-cov` 验证，含分支覆盖）
+- 对所有错误路径、边界条件、并发场景编写专项测试
+
+### Lint
+- 通过 **flake8** 检测（零报错）
+- 通过 **Pylance** 类型检查（零报错，strict 模式）
+- 使用 `ruff` 做代码格式检查
+
+### 类型标注
+- 禁止使用 `Any`（无法推断具体类型的场景使用 `TypeVar` 或 `Union` 精确定义）
+- 所有函数参数和返回值必须标注完整类型
+- 所有 dataclass 字段必须标注类型
+- 泛型函数必须使用 `TypeVar` 声明类型参数
+
+---
+
+## 源码目录结构
+
+本文档对应的核心源码目录：
+
+```
+src/
+├── __init__.py                   # 包入口，导出 AgentRuntime, HookPoint, PrimitiveType 等
+├── _runtime.py                   # AgentRuntime 核心类（状态机 + step loop）
+├── _types.py                     # 共享类型别名（RouterFn, ExecutorFn, InterceptResult 等）
+├── context/
+│   ├── __init__.py
+│   ├── _context.py               # RuntimeContext（不可变快照 + 受限写接口）
+│   ├── _payload.py               # ContextPayload（上下文操作对象 + 脏标记）
+│   └── _serializer.py            # MessageSerializer 接口 + DefaultSerializer
+├── hooks/
+│   ├── __init__.py
+│   ├── _registry.py              # HookRegistry（分层编排引擎）
+│   └── _primitives.py            # Observer / Transformer / Interceptor 定义
+├── pipeline/
+│   ├── __init__.py
+│   └── _pipeline.py              # Pipeline[T] 通用管线框架
+├── plugins/
+│   ├── __init__.py
+│   └── _plugin.py                # PluggableComponent + Plugin 协议
+├── config/
+│   ├── __init__.py
+│   └── _runtime_config.py        # RuntimeConfig 全局配置 + 多源加载
+└── _steps/
+    ├── __init__.py
+    └── _step_runner.py           # StepRunner 单步执行器（before_llm → LLM → after_llm → tool）
+```
+
+各子模块的详细目录结构见对应子文档。
+
+---
+
 ## 一、Hook Point（挂载点）
 
 目前定义了 **10 个挂载点**，覆盖从会话创建到错误处理的完整生命周期：
@@ -523,6 +587,92 @@ class AgentRuntime:
 3. **装饰器语法 `@runtime.on(HookPoint.AFTER_LLM)`** 提供声明式注册方式，适合简单场景
 4. **`HandlerInfo` 的 `handler_id` 支持后续热加载操作**（remove / replace / list）
 
+### 6.5 `Pipeline[T]` —— 通用管线框架
+
+> 应用于：ContextManager 五阶段管线、StepRunner 单步管线、Memory 读写管线。
+
+**问题**：ContextManager 的 5 阶段管线、StepRunner 的单步管线、Memory 的读写管线各自独立实现，但结构完全相同——有序 Stage 依次执行，每阶段可替换。
+
+**抽象形态**：
+
+```python
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Generic, TypeVar, Callable, Any
+
+T = TypeVar("T")
+
+
+class Stage(ABC, Generic[T]):
+    """管线中的一个阶段。"""
+    @abstractmethod
+    async def process(self, input: T, ctx: RuntimeContext) -> T: ...
+
+    async def should_run(self, ctx: RuntimeContext) -> bool:
+        return True
+
+
+@dataclass
+class StageInfo:
+    id: str
+    stage: Stage
+    order: int = 0
+    enabled: bool = True
+
+
+class Pipeline(Generic[T]):
+    """
+    通用管线——按序执行一组 Stage。
+
+    能力:
+    - add / remove / replace / enable / disable 任意 Stage
+    - 短路（任一 Stage 返回特殊标记可终止）
+    - 快照（记录每 Stage 的输入输出，用于调试和可观测性）
+    """
+
+    def __init__(self):
+        self._stages: list[StageInfo] = []
+
+    def add(self, stage: Stage, *, order: int = 0, id: str = "") -> None: ...
+    def remove(self, id: str) -> None: ...
+    def replace(self, id: str, stage: Stage) -> None: ...
+    def enable(self, id: str, enabled: bool) -> None: ...
+
+    async def execute(self, input: T, ctx: RuntimeContext) -> PipelineResult[T]:
+        """按 order 升序执行 Stage，任一 Stage 返回 Stop 标记则终止。"""
+```
+
+**具体映射**：
+
+```python
+# ContextManager 五阶段管线
+pipeline = Pipeline[ContextInput]()
+pipeline.add(SelectorStage(),   order=1, id="select")
+pipeline.add(LoaderStage(),     order=2, id="load")
+pipeline.add(CompressorStage(), order=3, id="compress")
+pipeline.add(BudgetStage(),     order=4, id="budget")
+pipeline.add(SerializerStage(), order=5, id="serialize")
+
+# StepRunner 单步管线
+pipeline = Pipeline[StepInput]()
+pipeline.add(LLMTransformStage(),    id="before_llm_transform")
+pipeline.add(LLMInterceptStage(),    id="before_llm_intercept")
+pipeline.add(LLMExecuteStage(),      id="llm_execute")
+pipeline.add(OutputInterceptStage(), id="after_llm_intercept")
+pipeline.add(ToolLoopStage(),        id="tool_loop")
+
+# Memory 读取管线
+pipeline = Pipeline[RecallInput]()
+pipeline.add(PatternRecallStage(),  order=1, id="pattern")
+pipeline.add(SemanticRecallStage(), order=2, id="semantic")
+pipeline.add(EntityRecallStage(),   order=3, id="entity")
+pipeline.add(EpisodicRecallStage(), order=4, id="episodic")
+pipeline.add(TokenBudgetStage(),    order=5, id="budget")
+```
+
+> **设计意图**：`Pipeline[T]` 是一个共享基础设施，各模块（ContextManager、StepRunner、MemoryService）在其基础上构建领域特定的管线。
+> 详见各子文档的具体实现。
+
 ---
 
 ## 七、内部执行模型（完整数据流）
@@ -974,11 +1124,241 @@ ExecutorFn = Callable[[RuntimeContext], Awaitable[T]]
 | [`llm-executor-design.md`](llm-executor-design.md) | LLMExecutor 接口、Provider 适配器、流式执行 | §6.4 `set_llm_executor` |
 | [`loop-strategy-design.md`](loop-strategy-design.md) | 3 种 LoopStrategy（ReAct / PlanExecute / Workflow）、工厂模式 | §6.4 `set_loop_executor` |
 | [`context-management-redesign.md`](context-management-redesign.md) | ContextManager 五阶段管线：Select → Load → Compress → Budget → Serialize | §5 ContextPayload |
-| [`memory-system-design.md`](memory-system-design.md) | 5 层记忆系统（工作/情景/实体/语义/行为模式）、SQLite 存储 | §8 #17 Memory Bank |
+| [`memory-system-design.md`](memory-system-design.md) | 5 层记忆系统、MemoryPersistence 最小接口（4 方法）、SQLite 默认实现 | §8 #17 Memory Bank |
 | ~~`observer-and-primitive-redesign.md`~~ | **已废弃**——核心思想已并入 §6，编码以 §6 为准 | §6 |
 | [`orchestration-components-design.md`](orchestration-components-design.md) | Planner、Replanner、CoT、子任务拆解、反思/自我批评 | §7 Router / §8 #35-36 |
 | [`serializer-design.md`](serializer-design.md) | MessageSerializer 可替换接口、ContextManager 第 5 阶段 | §5.3 序列化 / context-management.md §8 |
-| [`tool-mcp-skill-design.md`](tool-mcp-skill-design.md) | ToolSpec / MCPBridge / SkillManager 三种工具原语、统一调度器 | §8 #23 Tool guardrails |
+| [`tool-mcp-skill-design.md`](tool-mcp-skill-design.md) | ToolSpec / MCPBridge / SkillManager 三种工具原语、统一调度器 | §8 #23 Tool guardrails / §12 PluggableComponent |
 
 > ⚠️ **重要**：编码实现时，**必须同时加载主文档 + 对应子文档**作为上下文，否则可能因缺少交叉引用导致实现偏差。
 > 各文档之间通过顶部 ⚠️ 标记相互绑定——阅读任一子文档时请留意其关联文档列表。
+
+---
+
+## 十二、架构级抽象 —— `PluggableComponent` 与 `Plugin`
+
+### 12.1 问题
+
+遍历整个架构，每个模块都在重复同一件事：定义 ABC → 提供默认实现 → 注册到 Runtime。有 8 种不同的注册方式：
+
+```
+LLMExecutor  → set_llm_executor()        # setter 注入
+LoopStrategy → set_loop_executor()        # setter 注入 / 工厂
+Serializer   → ContextManager(serializer=) # DI 注入
+Persistence  → MemoryService(persistence=) # DI 注入
+Tool         → ToolRegistry.register()     # 注册表
+Hook         → runtime.observe/transform/intercept()  # 3 种注册
+MCP Server   → MCPServerManager.connect()  # 手动连接
+Skill        → SkillManager.scan()         # 目录扫描
+```
+
+### 12.2 `PluggableComponent` —— 统一组件协议
+
+```python
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+
+
+class PluggableComponent(ABC):
+    """
+    所有可插拔组件的统一协议。
+
+    任何需要挂载到 AgentRuntime 的模块都实现此接口。
+    runtime.use(component) 内部自动调用 on_attach()。
+    """
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """组件唯一标识。"""
+
+    async def on_attach(self, runtime: "AgentRuntime") -> None:
+        """
+        挂载到 Runtime 时调用。
+        组件在此注册自己的 hooks、executors、services。
+        默认无操作——组件按需覆写。
+        """
+        pass
+
+    async def on_detach(self) -> None:
+        """
+        从 Runtime 卸载时调用。
+        组件在此清理资源（关闭连接、取消任务）。
+        默认无操作——组件按需覆写。
+        """
+        pass
+```
+
+### 12.3 `Plugin` —— 面向用户的插件协议
+
+`Plugin` 继承 `PluggableComponent`，并增加 `_declare_hooks()` 方法，让用户无需理解 HookPoint 和 PrimitiveType 即可扩展 Runtime：
+
+```python
+class Plugin(PluggableComponent):
+    """
+    插件——自动声明需要注册的 hooks。
+    用户只需实现 _declare_hooks()，runtime.use() 自动注册。
+    """
+
+    def _declare_hooks(self) -> list[tuple[HookPoint, PrimitiveType, Callable]]:
+        """声明需要注册的 hooks。"""
+        return []
+
+    async def on_attach(self, runtime: "AgentRuntime") -> None:
+        """
+        默认实现：遍历 _declare_hooks() 的返回值，
+        对每个 (point, primitive, handler) 调用 runtime.register()。
+        插件可覆写此方法实现更复杂的注册逻辑。
+        """
+        for point, primitive, handler in self._declare_hooks():
+            runtime.register(point, handler, primitive=primitive, name=f"{self.name}.{handler.__name__}")
+```
+
+**具体插件示例**：
+
+```python
+class AuditPlugin(Plugin):
+    name = "audit"
+
+    def _declare_hooks(self):
+        return [
+            (HookPoint.AFTER_LLM,  PrimitiveType.OBSERVER,  self._on_llm),
+            (HookPoint.AFTER_TOOL, PrimitiveType.OBSERVER,  self._on_tool),
+            (HookPoint.SESSION_END, PrimitiveType.OBSERVER, self._flush),
+        ]
+
+    async def _on_llm(self, event, ctx): ...
+    async def _on_tool(self, event, ctx): ...
+    async def _flush(self, event, ctx): ...
+
+
+class HumanApprovalPlugin(Plugin):
+    name = "human_approval"
+
+    def __init__(self, require_for_tools: list[str]):
+        self._tools = require_for_tools
+
+    def _declare_hooks(self):
+        return [
+            (HookPoint.BEFORE_TOOL, PrimitiveType.INTERCEPT, self._check),
+        ]
+
+    async def _check(self, tool_call, ctx) -> InterceptResult:
+        if tool_call.name in self._tools:
+            return PauseAction(approval_id=f"approve_{tool_call.id}")
+        return AllowAction()
+```
+
+### 12.4 `runtime.use()` —— 统一挂载入口
+
+```python
+class AgentRuntime:
+    async def use(self, component: PluggableComponent) -> str:
+        """
+        挂载一个组件/插件到 Runtime。
+
+        统一入口处理所有模块的集成，替代 8 种分散的注册方式：
+        - 调用 component.on_attach(self) —— 组件自行注册 hooks/executors
+        - 记录组件引用，用于后续 on_detach
+        - 返回 component.name 用于后续管理
+        """
+        await component.on_attach(self)
+        self._components[component.name] = component
+        return component.name
+
+    async def remove(self, name: str) -> None:
+        """卸载指定名称的组件。"""
+        component = self._components.pop(name, None)
+        if component:
+            await component.on_detach()
+```
+
+**用户使用对比**：
+
+```python
+# 之前 —— 需要理解 3 种注册方法 + HookPoint + PrimitiveType
+runtime.observe(HookPoint.AFTER_LLM, my_logger, name="logging")
+runtime.intercept(HookPoint.BEFORE_TOOL, my_guard, name="guard")
+runtime.transform(HookPoint.BEFORE_LLM, my_rag, name="rag", priority=10)
+
+# 之后 —— 统一 use()
+runtime.use(LoggingPlugin())
+runtime.use(GuardPlugin())
+runtime.use(RAGPlugin())
+```
+
+### 12.5 `AgentRuntime.builder()` —— 声明式构造
+
+结合 `PluggableComponent` 和 `RuntimeConfig`，提供声明式构造入口：
+
+```python
+class AgentRuntime:
+    @classmethod
+    def builder(cls) -> "RuntimeBuilder":
+        """返回构造器，支持链式调用。"""
+        return RuntimeBuilder()
+
+    @classmethod
+    def from_config(cls, path: str) -> "AgentRuntime":
+        """从配置文件（YAML/TOML）加载并构造。"""
+        config = RuntimeConfig.from_yaml(path)
+        return RuntimeBuilder().from_config(config).build()
+
+
+class RuntimeBuilder:
+    """声明式构造器——链式 API 替代膨胀的构造参数。"""
+
+    def system_prompt(self, prompt: str) -> "RuntimeBuilder": ...
+    def llm(self, model: str, **kwargs) -> "RuntimeBuilder": ...
+    def tool(self, tool_spec) -> "RuntimeBuilder": ...
+    def memory(self, backend: str = "sqlite", **kwargs) -> "RuntimeBuilder": ...
+    def loop(self, strategy: str, **kwargs) -> "RuntimeBuilder": ...
+    def plugin(self, plugin: Plugin) -> "RuntimeBuilder": ...
+    def from_config(self, config: "RuntimeConfig") -> "RuntimeBuilder": ...
+    def build(self) -> AgentRuntime: ...
+```
+
+**使用示例**：
+
+```python
+# 方式 A：编程式
+runtime = (AgentRuntime.builder()
+    .system_prompt("你是电商客服助手")
+    .llm("gpt-4o", api_key="${OPENAI_API_KEY}")
+    .tool(query_order)
+    .tool(get_user_info)
+    .memory("sqlite", path="./memory.db")
+    .plugin(AuditPlugin())
+    .plugin(HumanApprovalPlugin(tools=["transfer"]))
+    .loop("plan_and_execute", max_replans=3)
+    .build())
+
+# 方式 B：配置文件
+runtime = AgentRuntime.from_config("agent.toml")
+
+# 方式 C：极简（全默认）
+runtime = AgentRuntime(system_prompt="你是助手")
+runtime.use(VerboseLoggingPlugin())  # 按需加插件
+```
+
+### 12.6 组件化迁移路径
+
+```python
+# Phase 1：现有模块适配 PluggableComponent
+class OpenAILLMExecutor(LLMExecutor, PluggableComponent):
+    name = "llm.openai"
+    async def on_attach(self, runtime):
+        runtime.set_llm_executor(self)
+
+class SQLiteMemoryPersistence(MemoryPersistence, PluggableComponent):
+    name = "memory.sqlite"
+    async def on_attach(self, runtime):
+        memory_service = MemoryService(persistence=self)
+        runtime.services["memory"] = memory_service
+
+# Phase 2：Runtime 构造使用 Builder
+runtime = AgentRuntime.builder().llm("gpt-4o").memory().build()
+
+# Phase 3：配置文件驱动
+runtime = AgentRuntime.from_config("agent.toml")
+```

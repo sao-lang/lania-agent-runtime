@@ -4,10 +4,14 @@ applyTo: '**/*.{ts,tsx}'
 
 # TypeScript Rules
 
+> **AI Summary**: TypeScript 开发规范，强调类型安全（interface > type、unknown > any）、JSDoc 文档注释、vitest 测试、ESLint + tsc 检查。
+
 - 类型声明优先用 interface，组件 props 用 interface 继承
 - 泛型参数用语义化命名（TData、TResponse），避免单字母
 - 优先 `unknown` 而非 `any`，减少类型断言 `as`
 - 函数返回类型显式标注，不依赖类型推断
+- 类型引用用 `import type` 而非 `import`，避免运行时残留
+- 优先命名导出（named export），减少 `export default`
 
 ## 注释规范
 
@@ -16,6 +20,40 @@ applyTo: '**/*.{ts,tsx}'
 - 复杂逻辑添加行内注释，解释"为什么做"而非"做了什么"
 - 使用 `@deprecated` 标注已废弃 API，并注明替代方案
 - 修改代码不得删除已有注释，逻辑变化时追加说明
+
+### 注释示例
+
+```typescript
+/**
+ * 用户认证服务，提供登录、登出和 Token 刷新功能。
+ *
+ * @remarks
+ * 所有方法均返回 StandardResponse<T> 统一格式，
+ * 使用 AuthTokenInterceptor 自动附加 Authorization header。
+ *
+ * @example
+ * ```ts
+ * const auth = new AuthService(httpClient);
+ * const res = await auth.login({ email: 'a@b.com', password: 'xxx' });
+ * ```
+ */
+export class AuthService {
+  /**
+   * 用户登录。
+   *
+   * @param credentials - 登录凭据（邮箱 + 密码）
+   * @param rememberMe - 是否记住登录状态（可选，默认 false）
+   * @returns 包含 accessToken 和 refreshToken 的响应
+   * @throws {AuthError} 当凭据无效或账户被锁定时
+   *
+   * @deprecated 自 v2.1 起改用 {@link loginWithOAuth}，此方法仅向后兼容
+   */
+  async login(
+    credentials: LoginCredentials,
+    rememberMe?: boolean,
+  ): Promise<StandardResponse<TokenPair>> { /* ... */ }
+}
+```
 
 ## Testing
 

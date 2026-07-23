@@ -4,6 +4,8 @@ applyTo: '**/*.{dart}'
 
 # Dart / Flutter Debug Rules
 
+> **AI Summary**: Dart 调试：dart analyze 静态分析→DevTools 可视化→热重载迭代→Widget 布局/异步/Null Safety 专项排查。
+
 Dart 调试核心策略：**静态分析 + DevTools 可视化 + 热重载迭代**。
 
 ## 调试脚本

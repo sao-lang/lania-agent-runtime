@@ -10,6 +10,27 @@
 
 ---
 
+## 编码规范
+
+本文档涉及的所有代码实现必须遵循以下质量要求：
+
+### 注释
+- 所有公共接口（LLMExecutor / StreamableLLMExecutor / LLMProvider）和数据类型（LLMResponse / ToolCall）必须包含完整的**中文 docstring**
+- Provider 适配逻辑必须添加行内中文注释说明 API 差异
+
+### 测试
+- 完整的**单元测试**（mock Provider，覆盖正常/错误/重试/流式路径）和**集成测试**（真实 LLM API 调用验证往返）
+- 测试通过率：**100%**，覆盖率：**≥96%**（含分支覆盖）
+
+### Lint
+- **flake8** 零报错 + **Pylance** strict 模式零报错 + `ruff` 格式检查通过
+
+### 类型标注
+- 禁止使用 `Any`；`LLMResponse`、`ToolCall` 等数据结构所有字段必须标注具体类型
+- 所有函数参数和返回值必须标注完整类型
+
+---
+
 ## 目录
 
 1. [设计目标](#1-设计目标)
@@ -1141,21 +1162,21 @@ docs/llm-executor-design.md           ← 本文档
 docs/agent-runtime-design.md           ← 父文档：Runtime 架构
 docs/memory-system-design.md           ← 父文档：记忆系统
 
-src/lania_agent_runtime/llm_executor/
+src/llm/
 ├── __init__.py                        # 导出 LLMExecutor, LLMResponse, ...
-├── interfaces.py                      # LLMExecutor 抽象基类
-├── models.py                          # LLMResponse, ToolCall, LLMUsage, LLMMessage
-├── config.py                          # LLMExecutorConfig
-├── providers/
+├── _interfaces.py                     # LLMExecutor 抽象基类
+├── _models.py                         # LLMResponse, ToolCall, LLMUsage, LLMMessage
+├── _config.py                         # LLMExecutorConfig
+├── _providers/
 │   ├── __init__.py
-│   ├── base.py                        # LLMProvider 抽象接口
-│   ├── openai_provider.py             # OpenAI SDK 适配
-│   └── anthropic_provider.py          # Anthropic SDK 适配
-├── executors/
+│   ├── _base.py                       # LLMProvider 抽象接口
+│   ├── _openai.py                     # OpenAI SDK 适配
+│   └── _anthropic.py                  # Anthropic SDK 适配
+├── _executors/
 │   ├── __init__.py
-│   ├── openai_executor.py             # OpenAILLMExecutor
-│   ├── anthropic_executor.py          # AnthropicLLMExecutor
-│   └── stream_collector.py            # AsyncStreamCollector
-├── errors.py                          # LLMExecutionError
-└── retry.py                           # RetryPolicy
+│   ├── _openai.py                     # OpenAILLMExecutor
+│   ├── _anthropic.py                  # AnthropicLLMExecutor
+│   └── _stream.py                     # AsyncStreamCollector
+├── _errors.py                         # LLMExecutionError
+└── _retry.py                          # RetryPolicy
 ```

@@ -1,5 +1,5 @@
 ---
-applyTo: 'packages/**/*.{ts,tsx}'
+applyTo: '**/*'
 ---
 
 # Debug Rules

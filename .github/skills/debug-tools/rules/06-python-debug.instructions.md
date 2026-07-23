@@ -4,6 +4,8 @@ applyTo: '**/*.{py}'
 
 # Python Debug Rules
 
+> **AI Summary**: Python 调试：mypy/pyright 类型检查→pytest 隔离→pdb 交互调试→logging 分级打点→cProfile 性能分析。
+
 Python 调试核心策略：**类型标注辅助静态检查 + logging 分级 + pdb 交互式调试 + 最小复现脚本**。
 
 ## 调试脚本

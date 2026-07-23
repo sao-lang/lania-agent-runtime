@@ -1,0 +1,5 @@
+{
+    "maxLineLength": 100,
+    "reportLineTooLong": "none",
+    "reportInvalidTypeForm": "none"
+}

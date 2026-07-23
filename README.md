@@ -10,11 +10,28 @@
 
 ---
 
+## 🧰 技术栈
+
+| 工具 | 用途 |
+|------|------|
+| **Python ≥3.10** | 运行语言 |
+| **Pydantic** | 运行时核心：所有数据模型（RuntimeContext / ContextPayload / LLMResponse 等）基于 `@dataclass` + `Protocol` 定义，工具参数校验使用 Pydantic 模型 |
+| **uv** | 项目管理：依赖安装、虚拟环境、`uv.lock` 锁定、`pyproject.toml` 构建（hatchling 后端） |
+| **ruff** | 代码检查与格式化：替代 flake8 + isort + black，`pyproject.toml` 中配置了完整的规则集（E/F/I/W/N/ANN） |
+| **pytest** | 测试框架：`asyncio_mode=auto`，覆盖率目标 ≥96% |
+| 不限 | LLM Provider 可替换（当前内置 OpenAI 适配器，可通过 `LLMProvider` 接口接入任意 Provider） |
+
+---
+
 ## 🌟 快速开始
 
 ### 安装
 
 ```bash
+# 推荐：使用 uv
+uv pip install lania-agent-runtime
+
+# 或使用 pip
 pip install lania-agent-runtime
 ```
 
@@ -169,14 +186,21 @@ runtime = AgentRuntime(
 ## 🛠 开发
 
 ```bash
-# 安装开发依赖
-pip install -e ".[dev]"
+# 使用 uv 创建虚拟环境并安装
+uv venv
+uv pip install -e ".[dev]"
 
-# 运行测试
-pytest
+# 运行测试（覆盖率 ≥96%）
+pytest --cov=src --cov-branch --cov-fail-under=96
 
-# 代码检查
-ruff check src/
+# 代码检查（ruff + flake8 规则，零报错）
+ruff check src/ --strict
+
+# 类型检查（Pylance strict 模式，零报错）
+# 在 VS Code 中启用 "python.analysis.typeCheckingMode": "strict"
+
+# 构建
+uv build
 ```
 
 ---

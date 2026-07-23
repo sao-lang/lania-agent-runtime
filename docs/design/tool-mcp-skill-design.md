@@ -3,9 +3,31 @@
 > ⚠️ **本文档是 `agent-runtime-design.md` 的子文档**。阅读前请确保已理解主文档中的 **Execute 原语**（§2）、**Tool Execute**（§7）和 **Tool guardrails**（§8 #23）。
 >
 > 关联文档：[`llm-executor-design.md`](llm-executor-design.md) — LLMExecutor 消费 Tool schema
-> 主文档：[`agent-runtime-design.md`](agent-runtime-design.md)
+> 主文档：[`agent-runtime-design.md`](agent-runtime-design.md) — §12 `PluggableComponent`（Tool/MCP/Skill 统一通过 `runtime.use()` 集成）
 
 > 基于 agent-runtime-design.md 的五级原语体系，定义 Tool / MCP / Skill 三种能力原语的抽象、接口、数据流和集成方案。
+
+---
+
+## 编码规范
+
+本文档涉及的所有代码实现必须遵循以下质量要求：
+
+### 注释
+- `ToolSpec`、`MCPServerConfig`、`MCPToolAdapter`、`SkillManager` 等核心类必须包含完整的**中文 docstring**
+- MCP 协议适配逻辑、三种原语的路由规则必须添加行内中文注释
+
+### 测试
+- 完整的**单元测试**（ToolRegistry 注册/描述/执行、MCP 连接/断开/工具发现、Skill 扫描/匹配/注入）和**端到端测试**（ToolDispatcher 完整路由链路）
+- 测试通过率：**100%**，覆盖率：**≥96%**（含分支覆盖）
+- 对 MCP 连接失败、工具执行异常等错误路径编写专项测试
+
+### Lint
+- **flake8** 零报错 + **Pylance** strict 模式零报错 + `ruff` 格式检查通过
+
+### 类型标注
+- 禁止使用 `Any`；`ToolSpec.handler` 的类型应使用 `Callable[..., Awaitable[Any]]` 而非裸 `Any`
+- `ToolDispatcher.dispatch()` 的输入输出类型必须精确标注
 
 ---
 
@@ -556,28 +578,24 @@ runtime = AgentRuntime(tools=registry, mcp=mcp, skills=skills)
 ## 10. 文件清单
 
 ```
-src/lania_agent_runtime/
-├── tool/                          # Tool 原语
-│   ├── __init__.py
-│   ├── base.py                    # ToolSpec
-│   ├── registry.py                # ToolRegistry
-│   └── dispatcher.py              # ToolDispatcher (统一调度)
+src/
+├── tools/                          # 统一工具目录（Tool + MCP + Skill）
+│   ├── __init__.py                 # 导出 ToolRegistry, MCPServerManager, SkillManager
+│   ├── _registry.py                # ToolRegistry
+│   ├── _dispatcher.py              # ToolDispatcher（统一调度）
+│   ├── _spec.py                    # ToolSpec
+│   ├── _mcp/
+│   │   ├── __init__.py
+│   │   ├── _config.py              # MCPServerConfig
+│   │   ├── _client.py              # MCPClient (stdio/sse 传输)
+│   │   ├── _adapter.py             # MCPToolAdapter
+│   │   └── _manager.py             # MCPServerManager
+│   └── _skill/
+│       ├── __init__.py
+│       ├── _manager.py             # SkillManager (扫描 + 注入)
+│       └── _models.py              # SkillEntry, SkillConfig
 │
-├── mcp/                           # MCP 原语
-│   ├── __init__.py
-│   ├── config.py                  # MCPServerConfig
-│   ├── client.py                  # MCPClient (stdio/sse 传输)
-│   ├── adapter.py                 # MCPToolAdapter
-│   └── manager.py                 # MCPServerManager
-│
-├── skill/                         # Skill 原语
-│   ├── __init__.py
-│   ├── manager.py                 # SkillManager (扫描 + 注入)
-│   └── models.py                  # SkillEntry, SkillConfig
-│
-└── runtime.py                     # AgentRuntime 改造
-                                       + tools/mcp/skills 参数
-                                       + __init__ 自动注入
+└── todo: 改为通过 runtime.use() 集成，不再直接修改 runtime.py
 ```
 
 各文件依赖关系：

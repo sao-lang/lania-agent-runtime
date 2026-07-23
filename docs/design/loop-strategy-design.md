@@ -2,7 +2,52 @@
 
 > ⚠️ **本文档是 `agent-runtime-design.md` 的子文档**。
 > 阅读前请确保已理解主文档中的 **Hook Point 体系**、**5 种原语类型** 和 **Runtime 核心状态**。
-> 主文档 [`agent-runtime-design.md`](agent-runtime-design.md) → §6.4 `set_loop_executor` → §11 关联设计文档。
+> 主文档 [`agent-runtime-design.md`](agent-runtime-design.md) → §6.4 `set_loop_executor` → §6.5 `Pipeline[T]`（StepRunner 的通用抽象）→ §11 关联设计文档。
+
+## 编码规范
+
+本文档涉及的所有代码实现必须遵循以下质量要求：
+
+### 注释
+- 所有公共接口（LoopStrategy / StepRunner / WorkflowNode）必须包含完整的**中文 docstring**
+- 三种策略的循环逻辑关键判断处必须添加行内中文注释
+
+### 测试
+- 完整的**单元测试**（每种 LoopStrategy 的循环逻辑、StepRunner 单步执行、WorkflowNode 三种节点）和**端到端测试**（LoopStrategy → StepRunner → Hook 全链路）
+- 测试通过率：**100%**，覆盖率：**≥96%**（含分支覆盖）
+
+### Lint
+- **flake8** 零报错 + **Pylance** strict 模式零报错 + `ruff` 格式检查通过
+
+### 类型标注
+- 禁止使用 `Any`；LoopStrategy 的 `run()` 和 StepRunner 的 `run_step()` 必须标注精确的输入输出类型
+
+---
+
+## 源码目录结构
+
+本文档对应的源码目录：
+
+```
+src/
+├── loops/                         # Loop 策略模块
+│   ├── __init__.py                # 导出 LoopStrategy, LoopStrategyFactory
+│   ├── _base.py                   # LoopStrategy ABC + 公共基类
+│   ├── _factory.py                # LoopStrategyFactory（注册 + 创建）
+│   ├── _react.py                  # ReActLoop（边思考边行动）
+│   ├── _plan_execute.py           # PlanExecuteLoop（先规划再执行）
+│   ├── _workflow.py               # WorkflowLoop（固定 DAG + 决策节点）
+│   └── _types.py                  # 共享类型（RunResult, StepResult, StreamEvent）
+├── hooks/                         # 编排相关的 Hook 实现
+│   ├── __init__.py
+│   ├── _critique_hook.py          # SelfCritiqueHook / DualModelCritiqueHook
+│   ├── _replan_hook.py            # ReplanHook（作为 Hook 的变体）
+│   └── _approval_hook.py          # HumanApprovalInterceptor + ApprovalPolicy
+└── _steps/
+    └── _step_runner.py            # StepRunner（被所有 LoopStrategy 共享）
+```
+
+---
 
 ## 一、概述
 
@@ -43,7 +88,7 @@ StepRunner 管单步内部:
 
 ### 2.1 ReActLoop — 边思考边行动
 
-**文件**: `src/lania_agent_runtime/loops/react.py`
+**文件**: `src/loops/_react.py`
 
 **循环结构**:
 ```
@@ -86,7 +131,7 @@ for _ in range(max_iterations):
 
 ### 2.2 PlanExecuteLoop — 先规划再执行
 
-**文件**: `src/lania_agent_runtime/loops/plan_execute.py`
+**文件**: `src/loops/_plan_execute.py`
 
 **循环结构**:
 ```
@@ -151,7 +196,7 @@ while step_index < len(plan.steps):
 
 ### 2.3 WorkflowLoop — 固定 DAG + Agent 决策节点
 
-**文件**: `src/lania_agent_runtime/loops/workflow.py`
+**文件**: `src/loops/_workflow.py`
 
 **节点类型**:
 ```python

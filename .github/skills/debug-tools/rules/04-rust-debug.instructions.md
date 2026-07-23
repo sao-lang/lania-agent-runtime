@@ -4,6 +4,8 @@ applyTo: '**/*.{rs}'
 
 # Rust Debug Rules
 
+> **AI Summary**: Rust 调试：编译器错误信息优先。cargo check→clippy→dbg! 宏打点→RUST_BACKTRACE 回溯→Miri 检测 unsafe。
+
 Rust 调试核心策略：**编译器错误信息优先，单元测试隔离，运行时用 `dbg!` 和 `tracing`**。
 
 ## 调试脚本

@@ -10,6 +10,20 @@
 >
 > **本文档保留仅作设计思路追溯，不应用于指导编码。**
 > 编码实现请以主文档 [`agent-runtime-design.md`](agent-runtime-design.md) §6 为准。
+> 本文档不涉及独立编码，编码规范以主文档 §「编码规范」为准。
+
+## 源码目录结构
+
+本文档对应主文档 [`agent-runtime-design.md`](agent-runtime-design.md) 的 `src/hooks/` 目录：
+
+```
+src/hooks/
+├── __init__.py                   # 导出 HookRegistry、Observer、Transformer、Interceptor
+├── _registry.py                  # HookRegistry（分层编排：控制层 + 观察层）
+└── _primitives.py                # PrimitiveType、Observer/Transformer/Interceptor 类型定义
+```
+
+> 本文档已废弃，编码实现以主文档 §6 为准。
 
 ## 一、问题分析
 
@@ -274,9 +288,9 @@ class HookRegistry:
 ### 3.2 需要同步修改的文件
 
 ```
-src/lania_agent_runtime/hooks.py      # 核心改动
-src/lania_agent_runtime/runtime.py    # run_observers → emit/emit_wait
-src/lania_agent_runtime/__init__.py   # 导出调整（如需要）
+src/hooks/_registry.py                # 核心改动
+src/_runtime.py                       # run_observers → emit/emit_wait
+src/__init__.py                       # 导出调整（如需要）
 tests/test_hooks.py                   # 测试适配
 tests/test_runtime.py                 # 测试适配
 tests/test_executor.py                # 可能依赖观察器行为

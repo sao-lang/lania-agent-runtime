@@ -4,6 +4,8 @@ applyTo: '**/*.{ts,tsx}'
 
 # TypeScript / TSX Debug Rules
 
+> **AI Summary**: TypeScript 调试：类型系统优先。tsc --noEmit 检查类型→vitest 测试→DevTools 运行时分析→最小复现隔离。
+
 TypeScript 调试核心策略：**类型系统优先，运行时验证兜底**。
 
 ## 调试脚本

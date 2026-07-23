@@ -4,9 +4,31 @@
 >
 > 关联文档：[`serializer-design.md`](serializer-design.md) — Serializer 可替换接口定义
 > 关联文档：[`memory-system-design.md`](memory-system-design.md) — MemoryService 数据来源
-> 主文档：[`agent-runtime-design.md`](agent-runtime-design.md)
+> 主文档：[`agent-runtime-design.md`](agent-runtime-design.md) — §6.5 `Pipeline[T]` 是本管线的通用抽象
 
 > 在现有 Hook + Memory 体系上封装统一上下文管理层，实现选取→压缩→预算→序列化四阶段管线。
+
+---
+
+## 编码规范
+
+本文档涉及的所有代码实现必须遵循以下质量要求：
+
+### 注释
+- 所有公共接口和方法必须包含完整的**中文 docstring**，说明用途、参数、返回值、异常
+- 复杂逻辑（>10 行）必须添加行内中文注释
+- 每个模块文件头部必须包含模块级别的中文注释说明职责
+
+### 测试
+- 完整的**单元测试**（覆盖 Selector / Compressor / BudgetController / Serializer 每个阶段）和**端到端测试**（ContextManager.assemble() 五阶段串联）
+- 测试通过率：**100%**，覆盖率：**≥96%**（含分支覆盖）
+
+### Lint
+- **flake8** 零报错 + **Pylance** strict 模式零报错 + `ruff` 格式检查通过
+
+### 类型标注
+- 禁止使用 `Any`（无法推断具体类型的场景使用 `TypeVar` 或 `Union`）
+- 所有函数参数和返回值必须标注完整类型
 
 ---
 
@@ -52,28 +74,22 @@
 ## 2. 新目录结构
 
 ```
-src/lania_agent_runtime/
-  ├── context/                          # ← 新增：上下文管理
+src/
+  ├── context/                          # 上下文管理
   │   ├── __init__.py                   #   导出 ContextManager
-  │   ├── manager.py                    #   ContextManager 主类（编排管线）
-  │   ├── selector.py                   #   选取策略（滑动窗口 + 去重）
-  │   ├── compressor.py                 #   压缩机制（截断/摘要/分层降级）
-  │   ├── budget.py                     #   预算执行（动态分配 + 强制裁剪）
-  │   ├── serializer.py                 #   序列化（ContextPayload → llm_messages）
-  │   ├── models.py                     #   上下文专用模型（可迁入通用模型）
-  │   ├── config.py                     #   上下文管理配置
-  │   └── hooks/
+  │   ├── _manager.py                   #   ContextManager 主类（编排管线）
+  │   ├── _selector.py                  #   选取策略（滑动窗口 + 去重）
+  │   ├── _compressor.py               #   压缩机制（截断/摘要/分层降级）
+  │   ├── _budget.py                    #   预算执行（动态分配 + 强制裁剪）
+  │   ├── _serializer.py                #   序列化（ContextPayload → llm_messages）
+  │   ├── _models.py                    #   上下文专用模型
+  │   ├── _config.py                    #   上下文管理配置
+  │   └── context_hooks/
   │       ├── __init__.py
-  │       └── assembler_hook.py         #   before_llm Transform: 编排入口
+  │       └── _assembler_hook.py         #   before_llm Transform: 编排入口
   │
-  ├── memory/
-  │   ├── ...                           #   基本不变
-  │   └── pipeline/
-  │       ├── recall.py                 #   改造：返回 RecallResult，不再写 ContextPayload
-  │       └── token_manager.py          #   迁入 context/budget.py，原位置保留别名
-  │
-  ├── models.py                         #   ContextPayload 精简，部分模型迁入 context/models.py
-  └── runtime.py                        #   注册 ContextAssemblerHook 替代 MemoryRecallHook
+  └── memory/
+      └── ...                           #   见 memory-system-design.md
 ```
 
 ---

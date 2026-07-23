@@ -10,6 +10,51 @@
 
 ---
 
+## 编码规范
+
+本文档涉及的所有代码实现必须遵循以下质量要求：
+
+### 注释
+- `MessageSerializer` 接口及其所有实现类必须包含完整的**中文 docstring**，说明序列化策略和输出格式
+- 用户自定义 Serializer 示例必须包含中文注释说明各步骤的用途
+
+### 测试
+- 完整的**单元测试**（DefaultSerializer 在各种 payload/messages 组合下的输出）和**向后兼容测试**（新 DefaultSerializer 与旧 serialize_for_llm() 输出一致）
+- 测试通过率：**100%**，覆盖率：**≥96%**（含分支覆盖）
+
+### Lint
+- **flake8** 零报错 + **Pylance** strict 模式零报错 + `ruff` 格式检查通过
+
+### 类型标注
+- 禁止使用 `Any`；`serialize()` 方法的输入参数和返回值必须标注精确类型
+- `SelectionDecision` 等模型类的所有字段必须标注类型
+
+---
+
+## 源码目录结构
+
+本文档对应的源码目录：
+
+```
+src/
+├── context/
+│   ├── __init__.py                # 导出 ContextManager, MessageSerializer, DefaultSerializer
+│   ├── _manager.py                # ContextManager（五阶段管线编排）
+│   ├── _selector.py               # Selector（滑动窗口 + 去重）
+│   ├── _compressor.py             # Compressor（分层降级 + 截断）
+│   ├── _budget.py                 # BudgetController（动态分配 + 强制裁剪）
+│   ├── _serializer.py             # ★ MessageSerializer ABC + DefaultSerializer
+│   ├── _models.py                 # SelectionDecision 等上下文专用模型
+│   ├── _config.py                 # ContextConfig 配置
+│   └── _hooks/
+│       ├── __init__.py
+│       └── _assembler_hook.py     # ContextAssemblerHook（before_llm Transform）
+├── context_payload.py             # ContextPayload 定义（由主文档管理）
+└── docs/examples/custom_serializer/  # 用户自定义 Serializer 示例
+```
+
+---
+
 ## 目录
 
 1. [设计目标](#1-设计目标)
