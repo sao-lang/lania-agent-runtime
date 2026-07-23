@@ -1,5 +1,10 @@
 # Memory System 技术方案文档
 
+> ⚠️ **本文档是 `agent-runtime-design.md` 的子文档**。阅读前请确保已理解主文档中的 **ContextPayload**（§5）和 **Hook 治理组件**（§8 #17 Memory Bank）。
+>
+> 关联文档：[`context-management-redesign.md`](context-management-redesign.md) — ContextManager 读取记忆
+> 主文档：[`agent-runtime-design.md`](agent-runtime-design.md)
+
 > 基于 agent-runtime-design.md 的五层记忆架构，定义存储接口、引擎选型、数据流和管理策略。
 
 ---
@@ -475,6 +480,10 @@ on after_step:
 
 收敛阈值之前的采样数据存在**内存缓冲**中，不写数据库。只有收敛结果才持久化。
 
+> ⚠️ **风险**：如果 Runtime 在采样达到阈值前崩溃（如第 9/10 次交互时），
+> 这 9 次采样的模式数据将全部丢失。对于行为模式这种低频收敛的特性可以接受，
+> 但如果需要零丢失保证，应改为每次采样都持久化。
+
 ---
 
 ## 3. 存储接口设计
@@ -578,9 +587,19 @@ class MemoryService:
 
         # Layer 3-5: 异步触发 (不阻塞回复)
         if user_id:
-            asyncio.ensure_future(
-                self._entity_extraction_pipeline(user_id, session_id, step_context)
+            asyncio.create_task(
+                self._safe_background_task(
+                    self._entity_extraction_pipeline(user_id, session_id, step_context),
+                    f"entity_extraction({user_id}, {session_id})",
+                )
             )
+
+    async def _safe_background_task(self, coro, name: str) -> None:
+        """安全的后台任务执行器——捕获异常并记录，不吞没错误。"""
+        try:
+            await coro
+        except Exception as e:
+            logger.error(f"Background task '{name}' failed: {type(e).__name__}: {e}")
 
     # ── 工作记忆快照 ──
 
@@ -709,7 +728,13 @@ class EpisodicMemoryStore(ABC):
         entry_id: str,
         merged_to_id: str,
     ) -> None:
-        """标记一条记录已被合并到另一条。"""
+        """
+        标记一条记录已被合并到另一条。
+
+        ⚠️ 此方法是 append-only 原则的唯一例外：
+        仅允许修改 merged_to 和 merged_from 字段，
+        不允许修改原始内容（summary / raw_content / entities 等）。
+        """
 
     @abstractmethod
     async def count_session(self, session_id: str) -> int:
@@ -1213,8 +1238,18 @@ async def commit(self, session_id, user_id, step_context):
     # ── 异步部分 (不阻塞回复, 后台执行) ──
 
     if user_id:
-        asyncio.create_task(self._entity_pipeline(user_id, session_id, step_context))
-        asyncio.create_task(self._pattern_sampling(user_id, step_context))
+        asyncio.create_task(
+            self._safe_background_task(
+                self._entity_pipeline(user_id, session_id, step_context),
+                f"entity_pipeline({user_id}, {session_id})",
+            )
+        )
+        asyncio.create_task(
+            self._safe_background_task(
+                self._pattern_sampling(user_id, step_context),
+                f"pattern_sampling({user_id}, {session_id})",
+            )
+        )
 
 
 async def _entity_pipeline(self, user_id, session_id, step_context):
@@ -1230,7 +1265,12 @@ async def _entity_pipeline(self, user_id, session_id, step_context):
 
     # 检查是否需要更新语义知识
     if len(extractions) > 0:
-        asyncio.create_task(self._semantic_pipeline(user_id, extractions))
+        asyncio.create_task(
+            self._safe_background_task(
+                self._semantic_pipeline(user_id, extractions),
+                f"semantic_pipeline({user_id})",
+            )
+        )
 
 
 async def _semantic_pipeline(self, user_id, extractions):
@@ -1320,14 +1360,18 @@ def _apply_token_budget(self, payload: ContextPayload, max_tokens: int) -> Conte
         return payload
 
     # 1. 裁剪情景记忆 (从最旧/最低重要性的开始)
-    if memory_tokens > budget * 0.5:
+    over = total - budget
+    if memory_tokens > 0:
         payload.memories.sort(key=lambda m: (m.importance, m.turn_index))
-        while memory_tokens > budget * 0.5 and payload.memories:
+        while memory_tokens > 0 and over > 0 and payload.memories:
             removed = payload.memories.pop(0)
             memory_tokens -= removed.token_count
+            over -= removed.token_count
+            total -= removed.token_count
 
     # 2. 如果还是超, 裁剪概念
     if total > budget and len(payload.concepts) > 1:
+        total -= len(payload.concepts) - 1
         payload.concepts = payload.concepts[:1]
 
     # 3. 如果还是超, 压缩画像为最精简格式

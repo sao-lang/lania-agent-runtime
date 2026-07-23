@@ -1,5 +1,11 @@
 # LLMExecutor 技术方案文档
 
+> ⚠️ **本文档是 `agent-runtime-design.md` 的子文档**。阅读前请确保已理解主文档中的 **Execute 原语**（§2）、**RuntimeContext**（§4）和 **Step Loop**（§7）设计。
+>
+> 关联文档：[`loop-strategy-design.md`](loop-strategy-design.md) — LoopStrategy 调用 LLMExecutor
+> 关联文档：[`context-management-redesign.md`](context-management-redesign.md) — ContextManager 组装 messages
+> 主文档：[`agent-runtime-design.md`](agent-runtime-design.md)
+
 > 基于 agent-runtime-design.md 的五级原语体系，定义 LLMExecutor 的接口、实现、数据流和集成方案。
 
 ---
@@ -127,13 +133,21 @@ class LLMExecutorConfig:
 ### 3.1 LLMResponse（输出）
 
 ```python
+class FinishReason(str, Enum):
+    """LLM 调用结束原因枚举——统一各文档和 LoopStrategy 的判断引用"""
+    STOP = "stop"
+    TOOL_CALLS = "tool_calls"
+    LENGTH = "length"
+    ERROR = "error"
+
+
 @dataclass
 class LLMResponse:
     """LLM 调用的统一返回格式"""
     content: str                         # 文本回复（tool_calls 时可能为空）
     tool_calls: list["ToolCall"]         # LLM 请求调用的工具列表
     usage: "LLMUsage"                    # Token 消耗统计
-    finish_reason: str                   # "stop" | "tool_calls" | "length" | "error"
+    finish_reason: FinishReason           # 枚举值：STOP / TOOL_CALLS / LENGTH / ERROR
     model: str                           # 实际使用的模型名
 
 
@@ -331,20 +345,28 @@ class OpenAILLMExecutor(LLMExecutor):
         return d
 
     def _merge_params(self, ctx: RuntimeContext) -> LLMExecutorConfig:
-        """ctx 配置覆盖默认配置"""
-        cfg = ctx.llm_config
-        return LLMExecutorConfig(
-            model=cfg.model or self._config.model,
-            temperature=cfg.temperature or self._config.temperature,
-            max_tokens=min(
-                cfg.max_tokens or self._config.max_tokens,
-                self._config.max_tokens,
-            ),
-        )
+        """ctx 配置覆盖默认配置。
+
+        ⚠️ RuntimeContext 不包含 llm_config 字段。
+        LLM 配置通过 LLMExecutorConfig 在构造时注入，
+        运行时不动态修改。如需按 step 调整参数，
+        请在 before_llm Transform 中通过 ctx.services 传递。
+        """
+        return self._config
 
     def _get_tools_schema(self, ctx: RuntimeContext) -> list[dict] | None:
-        """从 Runtime 获取已注册工具的 JSON Schema"""
-        return ctx.tools_schema  # None = 不传 tools
+        """
+        从 Runtime 获取已注册工具的 JSON Schema。
+
+        ⚠️ RuntimeContext 不直接持有 tools_schema。
+        工具 schema 由 ToolDispatcher 在每次 before_llm Transform 阶段
+        注入到 ctx.context_payload 或通过 ctx.services["tool_dispatcher"] 获取。
+        详见 tool-mcp-skill-design.md §7.3。
+        """
+        dispatcher = ctx.services.get("tool_dispatcher")
+        if dispatcher is None:
+            return None
+        return dispatcher.all_tools()  # None = 不传 tools
 
     def _to_response(self, raw, model: str) -> LLMResponse:
         """OpenAI 原始响应 → 统一 LLMResponse"""

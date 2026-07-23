@@ -1,5 +1,11 @@
 # 编排组件技术方案
 
+> ⚠️ **本文档是 `agent-runtime-design.md` 的子文档**。阅读前请确保已理解主文档中的 **Router 原语**（§2）、**Plan/Loop 体系**（§3）和 **Hook 接口**（§6）。
+>
+> 关联文档：[`loop-strategy-design.md`](loop-strategy-design.md) — LoopStrategy 调用编排组件
+> 关联文档：[`llm-executor-design.md`](llm-executor-design.md) — LLMExecutor 被编排组件调用
+> 主文档：[`agent-runtime-design.md`](agent-runtime-design.md)
+
 ## 一、概念定位
 
 根据之前的分析，编排组件（Planner / Replan / Reflection / 自我批评 / 双重验证 / CoT / 子任务拆解）与基础设施组件（Memory / Context / LLMExecutor / Tools）的关系是 **"消费者与提供者"**：
@@ -165,15 +171,23 @@ class PlannerTool:
 
     async def execute(self, task: str, ctx: RuntimeContext) -> dict:
         """生成计划。"""
+        # Planner 是 Tool 层面的组件，不经过完整的 Hook 管线。
+        # 它直接构造临时 messages 调用 LLMExecutor。
+        # 注意：这种方式会绕过 before_llm/after_llm hooks。
+        # 如果需要治理覆盖，应将 Planner 实现为 PlanExecuteLoop 的内置阶段
+        # （见 loop-strategy-design.md §2.2），而非独立 Tool。
         messages = [
             {"role": "system", "content": self._prompt},
             {"role": "user", "content": task},
         ]
-        # 临时创建子 context 调用 LLM
-        response = await self._llm.execute(
-            self._build_sub_context(ctx, messages)
-        )
+        response = await self._llm.execute_with_messages(messages)
         return {"plan": self._parse_plan(response.content)}
+
+    async def execute_with_messages(self, messages: list[dict]) -> "LLMResponse":
+        """直接以 messages 调用 LLM，不走 RuntimeContext。
+        供 PlannerTool 等不需要完整 hook 管线的场景使用。
+        """
+        ...
 ```
 
 ---
@@ -245,16 +259,22 @@ class ReplanHook:
     def __init__(self, llm_executor: LLMExecutor, max_replans: int = 3):
         self._llm = llm_executor
         self._max_replans = max_replans
-        self._count: dict[str, int] = defaultdict(int)
+        # 使用 OrderedDict 避免 session 泄漏（session 结束后应清理）
+        # 或在 session_end hook 中调用 self._cleanup(session_id)
+        self._count: dict[str, int] = {}
+
+    def _cleanup(self, session_id: str) -> None:
+        """在 session_end 时清理计数，防止内存泄漏"""
+        self._count.pop(session_id, None)
 
     async def __call__(self, step_result: dict, ctx: RuntimeContext) -> dict:
         """作为 Transform Hook 运行。"""
         session_id = ctx.session_id
-        if self._count[session_id] >= self._max_replans:
+        if self._count.get(session_id, 0) >= self._max_replans:
             return step_result
 
         if await self._needs_replan(ctx):
-            self._count[session_id] += 1
+            self._count[session_id] = self._count.get(session_id, 0) + 1
             new_plan = await self._generate_replan(ctx)
             ctx.set_plan(new_plan)
 
@@ -305,17 +325,9 @@ class SelfCritiqueHook:
         if critique.is_acceptable:
             return response
 
-        # 不合格：替换 response，触发重试
-        ctx.append_message({
-            "role": "user",
-            "content": (
-                f"[Self-Critique Feedback]\n"
-                f"Issues found:\n{critique.issues}\n"
-                f"Please improve your response."
-            ),
-        })
-        # 通过修改 finish_reason 让 ReActLoop 继续循环
-        response.finish_reason = "tool_calls"  # 强制继续
+        # 不合格：标记需要重试，通过 ctx 传递信号给 LoopStrategy
+        # LoopStrategy 在 after_llm 阶段检查此标记决定是否继续
+        ctx.services["_critique_retry"] = True
         return response
 
 

@@ -1,6 +1,12 @@
 # Serializer 可插拔方案 —— MessageSerializer 接口设计
 
-> 在现有 ContextManager 五阶段管线（context-management-redesign.md）基础上，将第 5 阶段「序列化」抽象为可替换的 `MessageSerializer` 接口，使用户能自定义 Agent 输入格式化，同时保持默认行为与现有 `serialize_for_llm()` 完全兼容。
+> ⚠️ **本文档是 `context-management-redesign.md` 的细化文档**。
+> 将 ContextManager 五阶段管线中的第 5 阶段「序列化」抽象为可替换的公共接口。
+>
+> 父文档：[`context-management-redesign.md`](context-management-redesign.md) — ContextManager 五阶段管线
+> 主文档：[`agent-runtime-design.md`](agent-runtime-design.md) — ContextPayload 定义（§5）
+
+> 在现有 ContextManager 五阶段管线基础上，将第 5 阶段「序列化」抽象为可替换的 `MessageSerializer` 接口，使用户能自定义 Agent 输入格式化，同时保持默认行为与现有 `serialize_for_llm()` 完全兼容。
 
 ---
 
@@ -343,13 +349,17 @@ class TemplateSerializer(MessageSerializer):
         return result
 ```
 
-### 4.4 System message 拆分（多个 system 消息）
+### 4.4 多条 system 消息（仅限支持多 system 的 provider）
 
-某些 LLM 提供商支持多个 `system` 消息（如 Claude），可以利用这一点做分层注入：
+> ⚠️ **注意**：本方案与主文档 `agent-runtime-design.md` §5.3 的假设不同。
+> 主文档规定 `messages[0]` 是唯一的 system message，`messages[1..n]` 是对话日志。
+> 此方案**仅适用于支持多个 system 消息的 LLM provider**（如 Anthropic Claude），
+> 在 OpenAI 上后续 system 消息会被视为 user 角色。
+> 使用前请确认 LLMExecutor 的 Provider 实现支持。
 
 ```python
 class MultiSystemSerializer(MessageSerializer):
-    """将上下文中不同来源拆成多条 system 消息。
+    """将上下文中不同来源拆成多条 system 消息（仅限支持多 system 的 provider）。
 
     结构:
       [0] role=system: 基础 system_prompt
@@ -727,7 +737,7 @@ def test_serialize_for_llm_deprecated_consistency():
 
 | 步骤 | 文件 | 操作 |
 |------|------|------|
-| 2.1 | `context/manager.py` | `ContextManager.__init__` 新增 `serializer` 参数，`assemble()` 中调用 `self._serializer.serialize()` |
+| 2.1 | `context/manager.py` | `ContextManager.__init__` 新增 `serializer` 参数，`assemble()` 中调用 `self._serializer.serialize()` |\n| 2.2 | 所有 `keep_from_index` 循环 | 跳过 system 消息时增加 `metadata.is_original_system` 判断，避免误删 tool_call 间的辅助 system 消息 |
 | 2.2 | `context/config.py` | `ContextConfig` 新增 `serializer` 字段 |
 | 2.3 | 测试 | 验证 `ContextManager` 使用 `DefaultSerializer` 输出与预期一致 |
 
@@ -826,7 +836,9 @@ class DefaultSerializer(MessageSerializer):
 
         keep_from = decision.keep_from_index
         for msg in messages[keep_from:]:
-            if msg.get("role") == "system":
+            # 跳过原始 system 消息（已被合并到上方的拼接结果中）
+            # 但保留 tool_call 之间的辅助 system 消息
+            if msg.get("role") == "system" and msg.get("metadata", {}).get("is_original_system", True):
                 continue
             result.append(dict(msg))
 

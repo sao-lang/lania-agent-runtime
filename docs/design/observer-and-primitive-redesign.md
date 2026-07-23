@@ -1,5 +1,16 @@
 # Observer 与原始类型重构方案
 
+> ⚠️ **本文档已被 [`agent-runtime-design.md`](agent-runtime-design.md) §6 取代。**
+>
+> 本文的核心思想（Observer 从控制层分离、Transform 串行 + Observer 并行）已并入主文档：
+> - **Observer 隔离执行** → 主文档 §6.3 `run_observers()` 并发 + 错误隔离
+> - **Transform 串行管线** → 主文档 §6.3 `run_transformers()` 串行执行
+> - **PrimitiveType 保留 5 种原语**（含 OBSERVER）→ 主文档 §6.1
+> - **Router/Executor 归属 AgentRuntime** → 主文档 §6.3
+>
+> **本文档保留仅作设计思路追溯，不应用于指导编码。**
+> 编码实现请以主文档 [`agent-runtime-design.md`](agent-runtime-design.md) §6 为准。
+
 ## 一、问题分析
 
 ### 1.1 当前设计的矛盾

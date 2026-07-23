@@ -1,5 +1,11 @@
 # ContextManager 技术方案
 
+> ⚠️ **本文档是 `agent-runtime-design.md` 的子文档**。阅读前请确保已理解主文档中的 **ContextPayload**（§5）、**Hook Point**（§1）和 **RuntimeContext**（§4）设计。
+>
+> 关联文档：[`serializer-design.md`](serializer-design.md) — Serializer 可替换接口定义
+> 关联文档：[`memory-system-design.md`](memory-system-design.md) — MemoryService 数据来源
+> 主文档：[`agent-runtime-design.md`](agent-runtime-design.md)
+
 > 在现有 Hook + Memory 体系上封装统一上下文管理层，实现选取→压缩→预算→序列化四阶段管线。
 
 ---
@@ -723,18 +729,18 @@ class ContextAssemblerHook:
 
 # 旧代码（移除）
 if has_episodic:
-    self._hooks.transform(
-        BEFORE_STEP, MemoryRecallHook(self._memory), name="memory_recall",
+    runtime.transform(
+        HookPoint.BEFORE_STEP, MemoryRecallHook(self._memory), name="memory_recall",
     )
 
-# 新代码
+# 新代码——使用主文档 agent-runtime-design.md §6 定义的 API
 if has_episodic:
     self._context_manager = ContextManager(
         memory=self._memory,
         config=ContextConfig(max_context_tokens=self._config.max_tokens or 4096),
     )
-    self._hooks.transform(
-        BEFORE_LLM,
+    runtime.transform(
+        HookPoint.BEFORE_LLM,
         ContextAssemblerHook(self._context_manager),
         name="context_assembler",
     )
@@ -751,6 +757,10 @@ if has_episodic:
 | `MemoryRecallHook` | `BEFORE_STEP` | 废弃 | 由 ContextAssemblerHook 替代 |
 | `MemoryCommitHook` | `AFTER_STEP` | `AFTER_STEP` | 不变 |
 | `ContextAssemblerHook` | — | `BEFORE_LLM` | 新增 |
+
+> ⚠️ **关于 Serializer**：ContextManager 的第 5 阶段（SERIALIZE）已抽象为可替换的 `MessageSerializer` 接口。
+> 详见 [`serializer-design.md`](serializer-design.md)。
+> 本章的 Serializer 是内部默认实现，用户可通过注入自定义 `MessageSerializer` 替换。
 
 ---
 

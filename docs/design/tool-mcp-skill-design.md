@@ -1,5 +1,10 @@
 # Tool / MCP / Skill 三种原语集成方案
 
+> ⚠️ **本文档是 `agent-runtime-design.md` 的子文档**。阅读前请确保已理解主文档中的 **Execute 原语**（§2）、**Tool Execute**（§7）和 **Tool guardrails**（§8 #23）。
+>
+> 关联文档：[`llm-executor-design.md`](llm-executor-design.md) — LLMExecutor 消费 Tool schema
+> 主文档：[`agent-runtime-design.md`](agent-runtime-design.md)
+
 > 基于 agent-runtime-design.md 的五级原语体系，定义 Tool / MCP / Skill 三种能力原语的抽象、接口、数据流和集成方案。
 
 ---
@@ -318,12 +323,12 @@ class SkillManager:
 
 ### 5.6 匹配策略
 
-| 策略 | 实现 | 适用场景 |
-|------|------|---------|
-| 关键词匹配 | `skill.toml` 中的 keywords 命中用户 query | 简单规则 |
-| 语义匹配 | 用 embedding 计算 query 与 skill 描述相似度 | 精确匹配 |
-| auto_inject | 无条件注入（如 system-level skill） | 全局知识 |
-| LLM 路由 | LLM 自行判断是否使用某 skill 的知识 | 灵活但昂贵 |
+| 策略 | 分数规则 | 适用场景 |
+|------|---------|---------|
+| 关键词匹配 | 命中 1 个关键词得 5 分，累加。`score ≥ priority` 时注入 | 简单规则 |
+| 语义匹配 | embedding 余弦相似度 × 10。`score ≥ priority` 时注入 | 精确匹配 |
+| auto_inject | `score = 999`，始终注入（如 system-level skill） | 全局知识 |
+| LLM 路由 | LLM 自行判断，`score = priority`（由 LLM 调用触发） | 灵活但昂贵 |
 
 设计要点：
 - **Transform 不是 Execute**：Skill 不改执行路径，只改 LLM 看到的上下文
@@ -351,12 +356,15 @@ class ToolDispatcher:
     ) -> None: ...
 
     def all_tools(self) -> list[dict]:
-        """合并 Tool + MCP 的全部 OpenAI schema（给 LLM 用）。"""
-        schemas = []
-        schemas.extend(self._tools.describe())
-        for spec in self._mcp.get_all_tools():
-            schemas.append(spec.to_openai_schema())
-        return schemas
+        """
+        合并 Tool + MCP 的全部工具描述。
+
+        注意：此方法返回 ToolSpec 列表而非 OpenAI 格式。
+        LLMExecutor 负责在 _get_tools_schema() 中将其转换为 provider 所需格式
+        （OpenAI tools 格式 / Anthropic tool 格式等）。
+        参见 llm-executor-design.md §4.1 _get_tools_schema()。
+        """
+        return [*self._tools.list_specs(), *self._mcp.get_all_tools()]
 
     async def dispatch(self, tool_call: dict, ctx: RuntimeContext) -> dict:
         """
@@ -364,16 +372,19 @@ class ToolDispatcher:
         路由规则:
           - "mcp_{server}_{tool}" → MCPServerManager
           - 其他                   → ToolRegistry
+
+        异常处理：工具执行异常**不在此捕获**，而是向上传播给 Runtime，
+        触发 on_error hook 链（Error Intercept 可做 retry/skip/degrade 决策）。
+        参见 agent-runtime-design.md §7 on_error 流程。
         """
         name = tool_call.get("name", "")
         args = tool_call.get("arguments", {})
 
-        try:
-            if name.startswith("mcp_"):
-                return await self._dispatch_mcp(name, args)
-            return {"result": await self._tools.execute(name, **args)}
-        except Exception as e:
-            return {"error": f"{type(e).__name__}: {e}"}
+        if name.startswith("mcp_"):
+            result = await self._dispatch_mcp(name, args)
+        else:
+            result = await self._tools.execute(name, **args)
+        return {"result": result}
 ```
 
 ### 6.2 Skill 不经过 Dispatcher
