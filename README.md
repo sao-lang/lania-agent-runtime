@@ -3,7 +3,7 @@
 一个**以治理为核心**的 Agent 运行时框架。核心设计理念：
 
 - **Runtime 管执行闭环** —— 状态机 + Step Loop，最小必要状态
-- **Hook 管治理逻辑** —— 9 个挂载点 × 5 种原语类型，无状态纯函数
+- **Hook 管治理逻辑** —— 12 个挂载点 × 5 种原语类型，无状态纯函数
 - **状态分层持有** —— Runtime 持有执行状态，外部服务持有持久化状态，互不越界
 
 适用于需要精细管控 LLM 调用、工具执行、审计追踪、人工审批的企业级 Agent 应用。
@@ -35,19 +35,44 @@ uv pip install lania-agent-runtime
 pip install lania-agent-runtime
 ```
 
-### 模式 A：开箱即用（~10 行）
+### 模式 A：开箱即用（~15 行）
 
 ```python
-from lania_agent_runtime import AgentRuntime
+import asyncio
+from src.runtime import AgentRuntime
+from src.runtime.llm import OpenAILLMExecutor, LLMExecutorConfig
 
-agent = AgentRuntime(
-    system_prompt="你是电商客服助手，回答简洁友好。",
-    llm_config={"model": "gpt-4o", "api_key": "sk-..."},
-)
+async def main():
+    executor = OpenAILLMExecutor(LLMExecutorConfig(
+        model="gpt-4o",
+        api_key="sk-...",
+    ))
 
-response = agent.run("帮我查一下订单 OD20240723001 的状态")
-print(response)
+    agent = AgentRuntime(
+        system_prompt="你是电商客服助手，回答简洁友好。",
+        llm_executor=executor,
+    )
+
+    result = await agent.run("帮我查一下订单 OD20240723001 的状态")
+    print(result.content)
+
+asyncio.run(main())
 ```
+
+> 💡 也可以通过 `RuntimeBuilder` 链式构造：
+>
+> ```python
+> from src.runtime import AgentRuntime
+>
+> agent = (
+>     AgentRuntime.builder()
+>     .system_prompt("你是电商客服助手，回答简洁友好。")
+>     .llm(model="gpt-4o", api_key="sk-...")
+>     .build()
+> )
+> # 注：builder 自动创建 OpenAILLMExecutor（需环境变量中有 api_key）
+> result = await agent.run("查订单")
+> ```
 
 ---
 
@@ -56,92 +81,119 @@ print(response)
 ### 模式 B：加工具（~30 行）
 
 ```python
-from lania_agent_runtime import AgentRuntime
+import asyncio
+from src.runtime import AgentRuntime
+from src.runtime.llm import OpenAILLMExecutor, LLMExecutorConfig
+from src.tools import ToolRegistry, ToolSpec
 
-agent = AgentRuntime(
-    system_prompt="你是电商客服助手。",
-    llm_config={"model": "gpt-4o"},
-)
-
-@agent.tool(name="query_order", description="查询订单状态")
 async def query_order(order_id: str) -> dict:
-    # 实际业务逻辑
     return {"status": "已发货", "express": "顺丰 SF123456"}
 
-@agent.tool(name="get_user_info", description="获取用户信息")
 async def get_user_info(user_id: str) -> dict:
     return {"name": "张三", "level": "VIP"}
 
-response = await agent.run_async("帮我查一下订单 OD20240723001 的状态")
-print(response)
+# 注册工具
+registry = ToolRegistry()
+registry.register(ToolSpec(
+    name="query_order", description="查询订单状态",
+    parameters={"order_id": {"type": "string"}},
+    handler=query_order, required=["order_id"],
+))
+registry.register(ToolSpec(
+    name="get_user_info", description="获取用户信息",
+    parameters={"user_id": {"type": "string"}},
+    handler=get_user_info, required=["user_id"],
+))
+
+async def main():
+    executor = OpenAILLMExecutor(LLMExecutorConfig(model="gpt-4o", api_key="sk-..."))
+    agent = AgentRuntime(
+        system_prompt="你是电商客服助手。",
+        llm_executor=executor,
+        tools=registry,  # ← 传入 ToolRegistry，自动注册工具调度
+    )
+    result = await agent.run("帮我查一下订单 OD20240723001 的状态")
+    print(result.content)
+
+asyncio.run(main())
 ```
+
+> 💡 传入 `tools` 参数后，Runtime 会自动创建 `ToolDispatcher` 并设为 `tool_executor`，
+> 同时注册 `before_llm` Transform 自动刷新 tools_schema。
 
 ### 模式 C：加治理（~50 行）
 
 ```python
-from lania_agent_runtime import AgentRuntime
-from lania_agent_runtime.extensions import HumanApprovalPlugin, BudgetPlugin, AuditPlugin
+import asyncio
+from src.runtime import AgentRuntime
+from src.runtime._types import HookPoint, PrimitiveType, BlockAction, AllowAction
+from src.runtime.llm import OpenAILLMExecutor, LLMExecutorConfig
 
-agent = AgentRuntime(
-    system_prompt="你是金融客服助手。",
-    llm_config={"model": "gpt-4o"},
-)
+async def main():
+    executor = OpenAILLMExecutor(LLMExecutorConfig(model="gpt-4o", api_key="sk-..."))
+    agent = AgentRuntime(
+        system_prompt="你是金融客服助手。",
+        llm_executor=executor,
+    )
 
-# 插件式治理
-agent.use(HumanApprovalPlugin(
-    require_for_tools=["transfer_money", "modify_order"],
-    approval_mode="console",   # 也支持 "api"、"webhook"
-))
+    # 自定义观察者（@runtime.on 装饰器）
+    @agent.on(HookPoint.AFTER_LLM)
+    async def log_response(event, ctx):
+        print(f"LLM 回复: {event.get('response','')[:100]}...")
 
-agent.use(BudgetPlugin(
-    max_steps=20,
-    max_tokens=100_000,
-    on_exceed="pause",         # 超限时可 "pause" / "warn" / "stop"
-))
+    # 自定义拦截器
+    @agent.on(HookPoint.BEFORE_TOOL, primitive=PrimitiveType.INTERCEPT)
+    async def check_sensitive_params(data, ctx):
+        if "bank_account" in str(data):
+            return BlockAction(reason="禁止传递敏感参数")
+        return AllowAction()
 
-agent.use(AuditPlugin(
-    storage="sqlite:///audit.db",
-    include=["llm_calls", "tool_calls", "errors"],
-))
+    # 或者用非装饰器方式
+    # agent.observe(HookPoint.AFTER_LLM, log_response, name="log_response")
+    # agent.intercept(HookPoint.BEFORE_TOOL, check_sensitive_params, name="check_params")
 
-# 自定义观察者
-@agent.observe(point="after_llm")
-async def log_response(response, ctx):
-    logger.info(f"LLM 回复: {response.content[:100]}...")
+    # 插件注册（需要 async 上下文）
+    # await agent.use(SomePlugin())
 
-# 自定义拦截器
-@agent.intercept(point="before_tool")
-async def check_sensitive_params(tool_call, ctx):
-    if "bank_account" in str(tool_call.arguments):
-        return BlockAction(reason="禁止传递敏感参数")
-    return AllowAction()
+    result = await agent.run("把1000元转到银行卡8888")
+    print(result.content)
 
-response = agent.run("把1000元转到银行卡8888")
-# → 触发 HumanApproval pause → 等待审批 → 继续
+asyncio.run(main())
 ```
+
+> ⚠️ `HumanApprovalPlugin`、`BudgetPlugin`、`AuditPlugin` 等治理插件尚在规划中。
+> 当前可用的治理组件：`HumanApprovalInterceptor`、`SelfCritiqueHook`、`DualModelCritiqueHook`、`ReplanHook`。
 
 ### 模式 D：完全自定义（100+ 行）
 
 ```python
-from lania_agent_runtime import AgentRuntime
-from lania_agent_runtime.loop import PlanExecuteLoop
-from lania_agent_runtime.llm import OpenAIExecutor
-from lania_agent_runtime.hooks import HookRegistry, PrimitiveType, HookPoint
+from src.runtime import AgentRuntime
+from src.runtime.loops import PlanExecuteLoop
+from src.runtime.llm import OpenAILLMExecutor, LLMExecutorConfig, LLMResponse, LLMUsage, FinishReason
+from src.runtime.hooks import HookRegistry, PrimitiveType, HookPoint
 
 # 自定义 LLM 执行器
-class MyCustomExecutor(OpenAIExecutor):
+class MyCustomExecutor(OpenAILLMExecutor):
     async def execute(self, ctx):
         response = await super().execute(ctx)
+        # 后处理
         response.content = self._post_process(response.content)
         return response
+
+    def _post_process(self, content: str) -> str:
+        return content.replace("\n\n", "\n")
 
 # 自定义 Router
 async def my_router(ctx):
     if ctx.budget.token_used > 50_000:
         return "summarize_step"
-    return ctx.plan.next_step()
+    return "llm"
 
 # 自定义 Hook
+async def my_threat_scanner(data, ctx):
+    from src.runtime._types import AllowAction
+    return AllowAction()
+
 registry = HookRegistry()
 registry.register(
     HookPoint.BEFORE_LLM, my_threat_scanner,
@@ -150,10 +202,10 @@ registry.register(
 
 runtime = AgentRuntime(
     hooks=registry,
-    loop=PlanExecuteLoop(),
-    llm_executor=MyCustomExecutor(model="gpt-4o"),
+    llm_executor=MyCustomExecutor(LLMExecutorConfig(model="gpt-4o", api_key="sk-...")),
     router=my_router,
 )
+# 注：LoopStrategy 通过 loop_strategy_name 参数或 LoopStrategyFactory 设置
 ```
 
 ---
@@ -162,7 +214,7 @@ runtime = AgentRuntime(
 
 | 概念 | 说明 |
 |------|------|
-| **Hook Point** | Runtime 执行流程中的 10 个挂载点（session_start → session_end） |
+| **Hook Point** | Runtime 执行流程中的 12 个挂载点（session_start → session_end → on_stream_chunk） |
 | **Primitive** | 5 种原语类型：Observe / Transform / Intercept / Router / Execute |
 | **ContextPayload** | 上下文中间层，Hook 操作此对象，Runtime 序列化为 LLM messages |
 | **RuntimeContext** | Hook 看到的只读快照 + 受限写接口 |
@@ -172,14 +224,17 @@ runtime = AgentRuntime(
 
 ---
 
-## 📦 扩展生态
+## 🧩 扩展生态（规划中）
 
-| 扩展包 | 说明 |
-|--------|------|
-| `lania-agent-runtime[memory]` | 5 层记忆系统（工作记忆/情景/实体/语义/行为模式） |
-| `lania-agent-runtime[guardrails]` | 治理组件（预算控制、人工审批、限流） |
-| `lania-agent-runtime[anthropic]` | Anthropic Claude Provider 适配器 |
-| `lania-agent-runtime[all]` | 全量安装 |
+| 扩展 | 说明 |
+|------|------|
+| Memory | 5 层记忆系统（工作记忆/情景/实体/语义/行为模式） |
+| Guardrails | 治理组件（预算控制、人工审批、限流） |
+| Anthropic Provider | Anthropic Claude Provider 适配器 |
+| MCP | Model Context Protocol 工具协议 |
+| Skill | Skill 预置能力加载 |
+
+> 以上扩展处于规划阶段，核心骨架已预留扩展点（`PluggableComponent` / `Plugin` 协议）。
 
 ---
 
