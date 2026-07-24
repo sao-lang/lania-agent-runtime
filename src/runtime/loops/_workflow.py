@@ -162,7 +162,7 @@ class AgentNode(WorkflowNode):
         """
         执行完整的 LLM 调用 + 工具调用。
 
-        通过 ctx.services["_runtime"] 获取 Runtime 引用后执行单步。
+        通过 ctx.services["_controller"] 获取 RuntimeController 引用后执行单步。
 
         Args:
             ctx: RuntimeContext 实例。
@@ -171,22 +171,23 @@ class AgentNode(WorkflowNode):
         Returns:
             StepResult 实例。
         """
-        runtime = ctx.services.get("_runtime")
-        if runtime is None:
-            raise WorkflowError("AgentNode 需要 Runtime 通过 ctx.services['_runtime'] 注入")
+        # 通过 services["_controller"] 获取 RuntimeController
+        ctl = ctx.services.get("_controller")
+        if ctl is None:
+            raise WorkflowError("AgentNode 需要 RuntimeController 通过 services['_controller'] 注入")
 
         # 可选：注入节点级别的 system prompt
         if self._system_prompt:
-            runtime._context_payload.injected_context.append(self._system_prompt)
+            ctl.context_payload.injected_context.append(self._system_prompt)
 
         # 更新 step 计数
-        runtime._step_index += 1
+        ctl.step_index += 1
 
         # 构建新的上下文
-        ctx = runtime._build_context()
+        ctx = ctl.build_context()
 
         # 委托给 StepRunner
-        step_result = await step_runner.run_step(ctx, runtime)
+        step_result = await step_runner.run_step(ctx, ctl)
         self.result = step_result
         return step_result
 
@@ -544,6 +545,7 @@ class WorkflowLoop(LoopStrategy):
         self,
         hooks: Any,
         step_runner: Any,
+        controller: Any,
         workflow_definition: WorkflowDefinition,
         router: Any | None = None,
     ) -> None:
@@ -553,10 +555,11 @@ class WorkflowLoop(LoopStrategy):
         Args:
             hooks: HookRegistry 实例。
             step_runner: StepRunner 实例。
+            controller: RuntimeController 实例。
             workflow_definition: 工作流定义。
             router: 可选的路由函数。
         """
-        super().__init__(hooks, step_runner, router)
+        super().__init__(hooks, step_runner, controller, router)
         self._workflow = workflow_definition
 
     async def run(self, ctx: RuntimeContext) -> None:
@@ -568,12 +571,12 @@ class WorkflowLoop(LoopStrategy):
         Args:
             ctx: RuntimeContext 实例。
         """
-        runtime = self._get_runtime(ctx)
+        ctl = self._controller
         current_node_id: str | None = self._workflow.start_node_id
         visited: set[str] = set()
 
         while current_node_id is not None:
-            if runtime.status != "running":
+            if ctl.status != "running":
                 break
 
             node = self._workflow.get_node(current_node_id)
@@ -587,7 +590,7 @@ class WorkflowLoop(LoopStrategy):
 
             # 步前 hook：Interceptor → Transformer → Observer
             if await self._run_before_step_hooks(ctx):
-                runtime.status = "error"
+                ctl.status = "error"
                 break
 
             # 执行节点
@@ -597,15 +600,8 @@ class WorkflowLoop(LoopStrategy):
 
             # 步后 hook：Transformer → Observer
             await self._run_after_step_hooks(ctx)
-            runtime._budget.step_count += 1
-            ctx = runtime._build_context()
-            node.result = result
-            visited.add(current_node_id)
-
-            # 步后 hook：Transformer → Observer
-            await self._run_after_step_hooks(ctx)
-            runtime._budget.step_count += 1
-            ctx = runtime._build_context()
+            ctl.budget.step_count += 1
+            ctx = ctl.build_context()
 
             # 决定下一个节点
             if isinstance(node, ConditionNode):
@@ -628,12 +624,12 @@ class WorkflowLoop(LoopStrategy):
         Yields:
             流式事件字典。
         """
-        runtime = self._get_runtime(ctx)
+        ctl = self._controller
         current_node_id: str | None = self._workflow.start_node_id
         visited: set[str] = set()
 
         while current_node_id is not None:
-            if runtime.status != "running":
+            if ctl.status != "running":
                 break
 
             node = self._workflow.get_node(current_node_id)
@@ -654,8 +650,8 @@ class WorkflowLoop(LoopStrategy):
             yield {"type": "node_end", "node_id": current_node_id, "result": str(result)[:200]}
 
             await self._run_after_step_hooks(ctx)
-            runtime._budget.step_count += 1
-            ctx = runtime._build_context()
+            ctl.budget.step_count += 1
+            ctx = ctl.build_context()
 
             # 决定下一个节点
             if isinstance(node, ConditionNode):
@@ -664,26 +660,6 @@ class WorkflowLoop(LoopStrategy):
                 current_node_id = condition.branches.get(branch) if condition else None
             else:
                 current_node_id = self._workflow.next_node(node.node_id)
-
-    def _get_runtime(self, ctx: RuntimeContext) -> Any:
-        """
-        从 RuntimeContext 获取关联的 AgentRuntime 实例。
-
-        Args:
-            ctx: RuntimeContext 实例。
-
-        Returns:
-            AgentRuntime 实例。
-
-        Raises:
-            WorkflowError: 如果 Runtime 引用未注入。
-        """
-        runtime = ctx.services.get("_runtime")
-        if runtime is None:
-            raise WorkflowError(
-                "WorkflowLoop 需要 Runtime 通过 ctx.services['_runtime'] 注入自身引用"
-            )
-        return runtime
 
     def _create_step_result(self, response: Any) -> StepResult:
         """将执行结果封装为 StepResult。"""

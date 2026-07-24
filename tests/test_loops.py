@@ -513,6 +513,7 @@ class TestWorkflowLoop:
         runtime.set_loop_strategy(WorkflowLoop(
             hooks=runtime._hooks,
             step_runner=runtime._step_runner,
+            controller=runtime._controller,
             workflow_definition=wf,
         ))
         await runtime.run("wf_test")
@@ -538,6 +539,7 @@ class TestWorkflowLoop:
         runtime.set_loop_strategy(WorkflowLoop(
             hooks=runtime._hooks,
             step_runner=runtime._step_runner,
+            controller=runtime._controller,
             workflow_definition=wf,
         ))
         await runtime.run("condition_test")
@@ -554,6 +556,7 @@ class TestWorkflowLoop:
         runtime.set_loop_strategy(WorkflowLoop(
             hooks=runtime._hooks,
             step_runner=runtime._step_runner,
+            controller=runtime._controller,
             workflow_definition=wf,
         ))
         result = await runtime.run("dep_test")

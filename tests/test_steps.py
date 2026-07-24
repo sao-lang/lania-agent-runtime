@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from src.runtime._control import RuntimeController
 from src.runtime._runtime import AgentRuntime
 from src.runtime._steps._step_runner import StepRunner
 from src.runtime._types import BlockAction, HookPoint, PauseAction, PrimitiveType
@@ -92,11 +93,12 @@ class TestStepRunner:
             llm_executor=mock_llm,
         )
 
+        ctl = RuntimeController(runtime)
         result = await runner.run_llm_step(
             runtime._context_payload,
             messages,
             runtime._budget,
-            runtime,
+            ctl,
         )
         assert result is None  # 正常执行，无错误
 
@@ -114,10 +116,11 @@ class TestStepRunner:
             tool_executor=mock_tool,
         )
 
+        ctl = RuntimeController(runtime)
         await runner.run_tool_step(
             {"name": "test_tool"},
             messages,
-            runtime,
+            ctl,
         )
         # 工具结果应追加到 messages
         assert any(m.get("content") == "tool result" for m in messages)
@@ -140,8 +143,9 @@ class TestStepRunner:
         )
 
         runner = StepRunner(hooks=hooks, llm_executor=None)
+        ctl = RuntimeController(runtime)
         result = await runner.run_llm_step(
-            runtime._context_payload, messages, runtime._budget, runtime
+            runtime._context_payload, messages, runtime._budget, ctl
         )
         assert result is not None
         assert "no llm" in result
@@ -161,7 +165,8 @@ class TestStepRunner:
         )
 
         runner = StepRunner(hooks=hooks)
-        result = await runner.run_llm_step(runtime._context_payload, [], runtime._budget, runtime)
+        ctl = RuntimeController(runtime)
+        result = await runner.run_llm_step(runtime._context_payload, [], runtime._budget, ctl)
         assert result is None
         assert runtime.status == "paused"
 
@@ -180,7 +185,8 @@ class TestStepRunner:
         )
 
         runner = StepRunner(hooks=hooks)
-        await runner.run_tool_step({"name": "test"}, [], runtime)
+        ctl = RuntimeController(runtime)
+        await runner.run_tool_step({"name": "test"}, [], ctl)
         assert runtime.status == "paused"
 
     async def test_step_runner_tool_blocked(self) -> None:
@@ -198,8 +204,9 @@ class TestStepRunner:
         )
 
         runner = StepRunner(hooks=hooks, tool_executor=None)
+        ctl = RuntimeController(runtime)
         # 不应报错
-        await runner.run_tool_step({"name": "test"}, [], runtime)
+        await runner.run_tool_step({"name": "test"}, [], ctl)
 
     async def test_step_runner_no_executors(self) -> None:
         """StepRunner 无 executor 时不报错。"""
@@ -207,8 +214,9 @@ class TestStepRunner:
         runtime = AgentRuntime(system_prompt="助手")
 
         runner = StepRunner(hooks=hooks)
+        ctl = RuntimeController(runtime)
 
-        result = await runner.run_llm_step(runtime._context_payload, [], runtime._budget, runtime)
+        result = await runner.run_llm_step(runtime._context_payload, [], runtime._budget, ctl)
         assert result is None
 
-        await runner.run_tool_step(None, [], runtime)
+        await runner.run_tool_step(None, [], ctl)

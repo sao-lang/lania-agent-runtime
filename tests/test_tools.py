@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.runtime._builder import RuntimeBuilder
 from src.runtime._runtime import AgentRuntime
 from src.runtime._types import HookPoint
 from src.tools import ToolDispatcher, ToolRegistry
@@ -321,22 +322,21 @@ class TestToolDispatcher:
 
 
 class TestToolRuntimeIntegration:
-    """测试 Tool 与 AgentRuntime 的集成。"""
+    """测试 Tool 与 RuntimeBuilder/AgentRuntime 的集成。"""
 
     async def test_runtime_with_tools(self) -> None:
         registry = ToolRegistry()
         registry.register(_make_calc_spec())
         registry.register(_make_greet_spec())
 
-        runtime = AgentRuntime(
-            system_prompt="你是一个助手",
-            tools=registry,
+        runtime = (
+            RuntimeBuilder()
+            .system_prompt("你是一个助手")
+            .tool_registry(registry)
+            .build()
         )
 
-        # 验证 ToolDispatcher 已创建
-        assert runtime._tool_dispatcher is not None
-        assert runtime.tool_registry is registry
-        # 验证 tool_executor 已被设置为 dispatcher.dispatch
+        # 验证 tool_executor 已被 Builder 设置为 dispatcher.dispatch
         assert runtime._tool_executor is not None
         # 验证 before_llm Transform 已注册
         handlers = runtime._hooks.list(HookPoint.BEFORE_LLM)
@@ -347,77 +347,6 @@ class TestToolRuntimeIntegration:
         registry.register(_make_calc_spec())
         registry.register(_make_greet_spec())
 
-        runtime = AgentRuntime(
-            system_prompt="你是一个助手",
-            tools=registry,
-        )
-
-        # 验证 before_llm Transform 会更新 services 中的 tools_schema
-        from src.runtime.context._payload import ContextPayload
-
-        ctx = runtime._build_context()
-        payload = ContextPayload(system_prompt="你是一个助手")
-
-        await runtime._inject_tools_schema(payload, ctx)
-
-        # 验证 services 中有了 tools_schema
-        schema = runtime._services.get("tools_schema")
-        assert schema is not None
-        assert len(schema) == 2
-        assert schema[0]["type"] == "function"
-        assert schema[0]["function"]["name"] in ("calculator", "greet")
-
-    async def test_runtime_without_tools(self) -> None:
-        """不传入 tools 时，ToolDispatcher 仍被创建（空注册表）。"""
-        runtime = AgentRuntime(system_prompt="你是一个助手")
-        assert runtime._tool_dispatcher is not None
-        assert runtime.tool_registry is not None
-        # 仍有 tools_schema Transform（刷新空的工具列表）
-        handlers = runtime._hooks.list(HookPoint.BEFORE_LLM)
-        assert any(h.name == "_tools_schema_refresh" for h in handlers)
-
-    async def test_runtime_tool_executor_fallback(self) -> None:
-        """同时提供 tools 和 tool_executor 时，tools 优先。"""
-        registry = ToolRegistry()
-        registry.register(_make_calc_spec())
-
-        async def fallback_executor(ctx):
-            return {"role": "tool", "content": "fallback"}
-
-        runtime = AgentRuntime(
-            system_prompt="你是一个助手",
-            tools=registry,
-            tool_executor=fallback_executor,
-        )
-
-        # tools 优先，tool_executor 被 dispatcher.dispatch 覆盖
-        assert runtime._tool_executor is not fallback_executor
-        assert runtime._tool_dispatcher is not None
-
-    async def test_runtime_tool_registry_property(self) -> None:
-        registry = ToolRegistry()
-        registry.register(_make_calc_spec())
-
-        runtime = AgentRuntime(
-            system_prompt="你是一个助手",
-            tools=registry,
-        )
-
-        assert runtime.tool_registry is registry
-        # 通过 property 访问并执行工具
-        result = await runtime.tool_registry.execute("calculator", a=10, b=20)
-        assert result == 30
-
-
-class TestToolRuntimeBuilderIntegration:
-    """测试 RuntimeBuilder 的 tool_registry() 方法。"""
-
-    async def test_builder_with_tool_registry(self) -> None:
-        from src.runtime._builder import RuntimeBuilder
-
-        registry = ToolRegistry()
-        registry.register(_make_calc_spec())
-
         runtime = (
             RuntimeBuilder()
             .system_prompt("你是一个助手")
@@ -425,16 +354,54 @@ class TestToolRuntimeBuilderIntegration:
             .build()
         )
 
-        assert runtime.tool_registry is registry
-        assert runtime._tool_dispatcher is not None
+        # 执行 before_llm Transform 验证 tools_schema 注入
+        from src.runtime.context._payload import ContextPayload
+        from src.runtime.context._context import RuntimeContext
+        from src.runtime._types import BudgetSnapshot
 
-    async def test_builder_tool_registry_chain(self) -> None:
-        from src.runtime._builder import RuntimeBuilder
+        ctx = RuntimeContext(
+            session_id="test",
+            messages=(),
+            budget=BudgetSnapshot(),
+            services=dict(runtime._services),
+        )
+        payload = ContextPayload(system_prompt="你是一个助手")
 
+        # 手动触发 tools_schema_refresh Transform
+        for h in runtime._hooks.list(HookPoint.BEFORE_LLM):
+            if h.name == "_tools_schema_refresh":
+                await h.handler(payload, ctx)
+
+        # 验证 services 中有了 tools_schema
+        schema = ctx.services.get("tools_schema")
+        assert schema is not None
+        assert len(schema) == 2
+        assert schema[0]["type"] == "function"
+        assert schema[0]["function"]["name"] in ("calculator", "greet")
+
+    async def test_runtime_without_tools(self) -> None:
+        """不传入 tools 时，没有 tools_schema Transform。"""
+        runtime = AgentRuntime(system_prompt="你是一个助手")
+        handlers = runtime._hooks.list(HookPoint.BEFORE_LLM)
+        assert not any(h.name == "_tools_schema_refresh" for h in handlers)
+
+    async def test_runtime_tool_executor_direct(self) -> None:
+        """直接传入 tool_executor，不经过 Builder。"""
+        async def fallback_executor(ctx):
+            return {"role": "tool", "content": "fallback"}
+
+        runtime = AgentRuntime(
+            system_prompt="你是一个助手",
+            tool_executor=fallback_executor,
+        )
+
+        assert runtime._tool_executor is fallback_executor
+
+    async def test_builder_with_tool_executor_and_registry(self) -> None:
+        """Builder 同时设置 tool_registry 和自定义 tool_executor 时，registry 优先。"""
         registry = ToolRegistry()
         registry.register(_make_calc_spec())
 
-        # 同时设置 tool (ExecutorFn) 和 tool_registry，tool_registry 优先
         async def fallback(ctx):
             return {"role": "tool", "content": "fallback"}
 
@@ -446,6 +413,30 @@ class TestToolRuntimeBuilderIntegration:
             .build()
         )
 
-        assert runtime.tool_registry is registry
-        # tool_executor 已被 dispatcher.dispatch 覆盖
+        # tool_executor 已被 dispatcher.dispatch 覆盖（registry 优先）
         assert runtime._tool_executor is not fallback
+        assert runtime._tool_executor is not None
+        # 验证 before_llm Transform 已注入 tools_schema
+        handlers = runtime._hooks.list(HookPoint.BEFORE_LLM)
+        assert any(h.name == "_tools_schema_refresh" for h in handlers)
+
+
+class TestToolRuntimeBuilderIntegration:
+    """测试 RuntimeBuilder 的 tool_registry() 方法。"""
+
+    async def test_builder_with_tool_registry(self) -> None:
+        registry = ToolRegistry()
+        registry.register(_make_calc_spec())
+
+        runtime = (
+            RuntimeBuilder()
+            .system_prompt("你是一个助手")
+            .tool_registry(registry)
+            .build()
+        )
+
+        # tool_executor 被设为 dispatcher.dispatch
+        assert runtime._tool_executor is not None
+        # 验证 before_llm Transform 已注册
+        handlers = runtime._hooks.list(HookPoint.BEFORE_LLM)
+        assert any(h.name == "_tools_schema_refresh" for h in handlers)

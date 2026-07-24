@@ -77,6 +77,7 @@
 src/
   ├── context/                          # 上下文管理
   │   ├── __init__.py                   #   导出 ContextManager
+  │   ├── _protocols.py                 #   MemoryRecallProtocol / MemoryCommitProtocol
   │   ├── _manager.py                   #   ContextManager 主类（编排管线）
   │   ├── _selector.py                  #   选取策略（滑动窗口 + 去重）
   │   ├── _compressor.py               #   压缩机制（截断/摘要/分层降级）
@@ -140,6 +141,9 @@ before_llm 触发
 `context/manager.py`
 
 ```python
+from src.context._protocols import MemoryRecallProtocol
+
+
 class ContextManager:
     """上下文管理统一入口。
 
@@ -149,7 +153,7 @@ class ContextManager:
 
     def __init__(
         self,
-        memory: MemoryService,
+        memory: MemoryRecallProtocol,
         selector: Selector | None = None,
         compressor: Compressor | None = None,
         budget_controller: BudgetController | None = None,
@@ -181,7 +185,31 @@ class ContextManager:
         return self._serializer.serialize(payload, decision, ctx)
 ```
 
-### 4.1 与 MemoryService 的新接口
+### 4.1 依赖协议而非具体类
+
+`ContextManager` 依赖 `MemoryRecallProtocol` 而非具体 `MemoryService`：
+
+```python
+from src.context._protocols import MemoryRecallProtocol
+
+class ContextManager:
+    def __init__(
+        self,
+        memory: MemoryRecallProtocol,   # ← 依赖协议，不依赖具体实现
+        selector: Selector | None = None,
+        compressor: Compressor | None = None,
+        budget_controller: BudgetController | None = None,
+        serializer: Serializer | None = None,
+        config: ContextConfig | None = None,
+    ):
+        self._memory = memory       # 唯一的外部依赖
+        ...
+```
+
+> `MemoryRecallProtocol` 只声明了 `recall_raw()` 一个方法，返回类型为 `Any`。
+> `MemoryService` 天然满足此协议（duck typing），两个包之间零导入、零耦合。
+
+### 4.2 与 MemoryService 的新接口
 
 ```python
 # MemoryService 新增方法（v2）
@@ -780,53 +808,58 @@ if has_episodic:
 
 ---
 
-## 11. Runtime 集成
+## 11. Runtime 集成（插拔模式）
+
+> ⚠️ Runtime 不感知任何具体组件。`ContextManager` 由用户在**外侧**创建并注册到 Hook 挂载点。
+
+### 11.1 用户侧手动注册
 
 ```python
-# runtime.py 改动部分
+from src.runtime import AgentRuntime
+from src.runtime._types import HookPoint
+from src.memory import MemoryService
+from src.memory._hooks import MemoryCommitHook
+from src.context._manager import ContextManager
+from src.context.context_hooks import ContextAssemblerHook
 
-class AgentRuntime:
-    def __init__(self, ..., context_manager: ContextManager | None = None):
-        # ... 原有逻辑 ...
+# 1. 用户组装
+memory = MemoryService(...)
+ctx_mgr = ContextManager(memory=memory, config=ContextConfig(compression_level=4))
 
-        self._ctx = RuntimeContext(...)
-        self._ctx.set_services({
-            "memory": self._memory,
-            "context": self._context_manager,   # 新增：暴露给其他 hook 使用
-        })
+# 2. Runtime 纯壳
+runtime = AgentRuntime(system_prompt="助手")
 
-        has_episodic = (...)
-        if has_episodic:
-            # 注册上下文编排 Hook（替换 MemoryRecallHook）
-            self._hooks.transform(
-                BEFORE_LLM,
-                ContextAssemblerHook(self._context_manager),
-                name="context_assembler",
-            )
-            # Commit 不变
-            self._hooks.transform(
-                AFTER_STEP,
-                MemoryCommitHook(self._memory),
-                name="memory_commit",
-            )
+# 3. 用户接线
+runtime.transform(HookPoint.BEFORE_LLM, ContextAssemblerHook(ctx_mgr), name="ctx_assembler")
+runtime.transform(HookPoint.AFTER_STEP, MemoryCommitHook(memory), name="memory_commit")
+```
 
-    # _step_loop 中移除 serialize_for_llm() 的调用
-    # 改为直接使用 ContextAssemblerHook 返回的 messages
-    async def _step_loop(self, user_id: str | None = None):
-        for _ in range(max_iterations):
-            # before_step (不再包含 memory recall)
-            ...
+### 11.2 Builder 快捷方式
 
-            # before_llm transform → ContextAssemblerHook → messages 已组装好
-            llm_data = {"messages": self._ctx.messages}
-            llm_data = await self._hooks.run_transformers(BEFORE_LLM, llm_data, self._ctx)
+```python
+runtime = (AgentRuntime.builder()
+    .system_prompt("助手")
+    .memory(MemoryService())                           # 数据层：记忆服务
+    .context(config=ContextConfig(compression_level=4)) # 编排层：上下文配置（可选）
+    .build())
+# ↑ build() 内部自动完成 ContextAssemblerHook + MemoryCommitHook 注册
+```
 
-            # ContextAssemblerHook 已填充 llm_data["messages"]
-            messages = llm_data.get("messages", self._ctx.messages)
+### 11.3 `_step_loop` 中的上下文装配
 
-            # LLM Execute 直接用 messages
-            response = await self._llm_executor.execute_with_messages(messages)
-            ...
+```python
+async def _step_loop(self):
+    for _ in range(max_iterations):
+        ...
+
+        # before_llm transform → 用户注册的 ContextAssemblerHook → messages 已组装好
+        llm_data = {"messages": self._ctx.messages}
+        llm_data = await self._hooks.run_transformers(BEFORE_LLM, llm_data, self._ctx)
+
+        # 用户注册的 Hook 已填充 llm_data["messages"]
+        messages = llm_data.get("messages", self._ctx.messages)
+        response = await self._llm_executor.execute_with_messages(messages)
+        ...
 ```
 
 ---
@@ -840,6 +873,14 @@ class AgentRuntime:
 class ContextConfig:
     """上下文管理配置。"""
 
+    # ── 主开关 ──
+    enabled: bool = True
+    """是否启用 ContextManager 管线。False 时只做持久化，不做上下文编排。"""
+
+    compression_level: int = 0
+    """强制指定压缩层级。0=自动，1(L1)=全量，2(L2)=记忆+实体+行为，
+       3(L3)=实体+行为，4(L4)=仅行为。"""
+
     # ── 预算 ──
     max_context_tokens: int = 32768       # 上下文总 token 上限
     reserve_for_response: int = 0          # 0 = 自动（10% of max_context_tokens）
@@ -850,7 +891,7 @@ class ContextConfig:
     min_preserve_turns: int = 3            # 最少保留轮次
     preserve_tool_context: bool = True     # 工具调用成对保留
 
-    # ── 分层降级 ──
+    # ── 分层降级阈值（仅 compression_level=0 时生效）──
     level1_threshold: int = 20000          # token > 20K 用 L1
     level2_threshold: int = 8000           # token > 8K 用 L2
     level3_threshold: int = 2000           # token > 2K 用 L3

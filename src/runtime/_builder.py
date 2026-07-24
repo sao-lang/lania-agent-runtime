@@ -6,7 +6,10 @@ RuntimeBuilder——声明式构造器。
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from src.runtime._runtime import AgentRuntime
 from src.runtime._types import ExecutorFn, RouterFn
@@ -44,6 +47,7 @@ class RuntimeBuilder:
         self._mcp_manager: MCPServerManager | None = None
         self._skill_manager: SkillManager | None = None
         self._memory_service: Any | None = None
+        self._context_config: Any | None = None
 
     def system_prompt(self, prompt: str) -> RuntimeBuilder:
         """
@@ -139,12 +143,12 @@ class RuntimeBuilder:
         self._skill_manager = manager
         return self
 
-    def memory(self, service: Any | None = None) -> RuntimeBuilder:
+    def memory(self, service: Any) -> RuntimeBuilder:
         """
-        注入记忆系统。
+        注入记忆系统（数据层）。
 
-        传入已组装好的 MemoryService 实例，Runtime 将自动注册
-        after_step Transform 将对话写入持久化记忆。
+        传入已组装好的 MemoryService 实例，build() 将自动创建 ContextManager
+        并注册 ContextAssemblerHook（before_llm）和 MemoryCommitHook（after_step）。
 
         Args:
             service: MemoryService 实例。由用户自行创建并注入，
@@ -154,6 +158,22 @@ class RuntimeBuilder:
             self（链式调用）。
         """
         self._memory_service = service
+        return self
+
+    def context(self, config: Any) -> RuntimeBuilder:
+        """
+        配置上下文编排策略（编排层）。
+
+        可选，仅在调用了 .memory() 时生效。
+        控制 ContextManager 的选取/压缩/预算策略。
+
+        Args:
+            config: ContextConfig 实例。
+
+        Returns:
+            self（链式调用）。
+        """
+        self._context_config = config
         return self
 
     def loop(self, strategy: str = "", **kwargs: Any) -> RuntimeBuilder:
@@ -254,36 +274,108 @@ class RuntimeBuilder:
         """
         构建 AgentRuntime 实例。
 
-        如果设置了 llm 配置（通过 .llm() 或 from_config()）且
-        未传入自定义 executor，自动创建 OpenAILLMExecutor。
+        在 build() 中完成所有外部组件的接线：
+        - ToolRegistry / MCP → ToolDispatcher + before_llm Transform
+        - SkillManager → before_llm Transform
+        - MemoryService → ContextManager + ContextAssemblerHook + MemoryCommitHook
+        - LLM 配置 → 自动创建 OpenAILLMExecutor
 
         Returns:
             配置好的 AgentRuntime 实例。
         """
-        # 自动创建 LLMExecutor（如果配置了 llm 且未自定义 executor，
-        # 且有 api_key 或环境变量中有 OPENAI_API_KEY）
+        # 自动创建 LLMExecutor
         if self._llm_executor is None and "llm_config" in self._services:
             from src.runtime.llm import LLMExecutorConfig, OpenAILLMExecutor
 
             config = LLMExecutorConfig.from_dict(self._services["llm_config"])
-            # 仅在提供了 api_key 时自动创建，否则只保留配置供后续手动注入
             if config.api_key or self._has_openai_api_key():
                 self._llm_executor = OpenAILLMExecutor(config)
 
+        # 确定 tool_executor：tool_registry / MCP 优先于原始 tool_executor
+        tool_executor = self._tool_executor
+        tool_registry = self._tool_registry
+
+        if tool_registry is not None or self._mcp_manager is not None:
+            from src.tools import ToolDispatcher
+
+            dispatcher = ToolDispatcher(
+                tool_registry=tool_registry or ToolRegistry(),
+                mcp_manager=self._mcp_manager,
+            )
+            tool_executor = dispatcher.dispatch
+            # 注册 before_llm Transform 刷新 tools_schema
+            async def inject_tools_schema(data: Any, ctx: Any) -> Any:
+                ctx.services["tools_schema"] = [
+                    t.to_openai_schema() for t in dispatcher.all_tools()
+                ]
+                return data
+
+            if self._hooks is None:
+                self._hooks = HookRegistry()
+            from src.runtime._types import HookPoint, PrimitiveType
+            self._hooks.register(
+                HookPoint.BEFORE_LLM, inject_tools_schema,
+                primitive=PrimitiveType.TRANSFORM,
+                name="_tools_schema_refresh", priority=100,
+            )
+
+        # 注册 Skill before_llm Transform
+        if self._skill_manager is not None:
+            if self._hooks is None:
+                self._hooks = HookRegistry()
+            from src.runtime._types import HookPoint, PrimitiveType
+            self._hooks.register(
+                HookPoint.BEFORE_LLM,
+                self._skill_manager.get_before_llm_hook(),
+                primitive=PrimitiveType.TRANSFORM,
+                name="_skill_inject", priority=200,
+            )
+
+        # 注册 Memory / Context hooks
+        if self._memory_service is not None:
+            from src.context._manager import ContextManager
+            from src.context.context_hooks import ContextAssemblerHook
+            from src.memory._hooks import MemoryCommitHook
+
+            if self._hooks is None:
+                self._hooks = HookRegistry()
+            from src.runtime._types import HookPoint, PrimitiveType
+
+            context_manager = ContextManager(
+                memory=self._memory_service,
+                config=self._context_config,
+            )
+            self._services["context_manager"] = context_manager
+
+            self._hooks.register(
+                HookPoint.BEFORE_LLM, ContextAssemblerHook(context_manager),
+                primitive=PrimitiveType.TRANSFORM,
+                name="_context_assembler", priority=300,
+            )
+            self._hooks.register(
+                HookPoint.AFTER_STEP, MemoryCommitHook(self._memory_service),
+                primitive=PrimitiveType.TRANSFORM,
+                name="_memory_commit", priority=500,
+            )
+
+        # 构建 Runtime（纯壳——不传任何外部组件参数）
         runtime = AgentRuntime(
             system_prompt=self._system_prompt,
             hooks=self._hooks,
             llm_executor=self._llm_executor,
-            tool_executor=self._tool_executor,
+            tool_executor=tool_executor,
             loop_executor=self._loop_executor,
             router=self._router,
             services=self._services or None,
             agent_id=self._agent_id,
-            tools=self._tool_registry,
-            mcp=self._mcp_manager,
-            skills=self._skill_manager,
-            memory_service=self._memory_service,
         )
+
+        # 检查 .context() 是否被错误地单独使用（无 .memory()）
+        if self._context_config is not None and self._memory_service is None:
+            logger.warning(
+                "调用了 .context() 但未调用 .memory()，配置已被忽略。"
+                "请先调用 .memory(MemoryService()) 再调用 .context(config)。"
+            )
 
         # 插件在 build() 时不自动注册（需要 async 上下文），
         # 用户需在异步上下文中调用 runtime.use(plugin)

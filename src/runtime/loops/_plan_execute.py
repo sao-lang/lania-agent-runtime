@@ -39,6 +39,7 @@ class PlanExecuteLoop(LoopStrategy):
         self,
         hooks: Any,
         step_runner: Any,
+        controller: Any,
         router: Any | None = None,
         planner_prompt: str = "",
         max_replans: int = 3,
@@ -50,12 +51,13 @@ class PlanExecuteLoop(LoopStrategy):
         Args:
             hooks: HookRegistry 实例。
             step_runner: StepRunner 实例。
+            controller: RuntimeController 实例。
             router: 可选的路由函数。
             planner_prompt: Planner 的系统提示词模板。
             max_replans: 最大重新规划次数，默认 3。
             max_iterations: 最大总执行步数，默认 20。
         """
-        super().__init__(hooks, step_runner, router)
+        super().__init__(hooks, step_runner, controller, router)
         self._planner_prompt = planner_prompt or self._default_planner_prompt()
         self._max_replans = max_replans
         self._max_iterations = max_iterations
@@ -82,21 +84,21 @@ class PlanExecuteLoop(LoopStrategy):
         Args:
             ctx: RuntimeContext 实例。
         """
-        runtime = self._get_runtime(ctx)
+        ctl = self._controller
 
         # === Phase 1: 规划 ===
         if await self._run_before_step_hooks(ctx):
-            runtime.status = "error"
+            ctl.status = "error"
             return
 
-        plan = await self._run_planner(ctx, runtime)
+        plan = await self._run_planner(ctx, ctl)
         if plan is None:
-            runtime.status = "error"
+            ctl.status = "error"
             return
 
         # 保存计划到 Runtime
-        runtime._plan = self._plan_to_dict(plan)
-        ctx = runtime._build_context()
+        ctl.plan = self._plan_to_dict(plan)
+        ctx = ctl.build_context()
 
         await self._run_after_step_hooks(ctx)
 
@@ -105,7 +107,7 @@ class PlanExecuteLoop(LoopStrategy):
         total_steps = 0
 
         while step_index < len(plan.steps):
-            if runtime.status != "running":
+            if ctl.status != "running":
                 break
             if total_steps >= self._max_iterations:
                 break
@@ -114,7 +116,7 @@ class PlanExecuteLoop(LoopStrategy):
 
             # 步前 hook：Interceptor → Transformer → Observer
             if await self._run_before_step_hooks(ctx):
-                runtime.status = "error"
+                ctl.status = "error"
                 break
 
             # Router 检查
@@ -123,25 +125,25 @@ class PlanExecuteLoop(LoopStrategy):
                 break
 
             # 注入 step description 到 context
-            runtime._context_payload.injected_context.append(step.description)
-            ctx = runtime._build_context()
+            ctl.context_payload.injected_context.append(step.description)
+            ctx = ctl.build_context()
 
             # 更新 step 计数
-            runtime._step_index += 1
-            runtime._timeout["step_start_at"] = int(time.time() * 1000)
+            ctl.step_index += 1
+            ctl.timeout["step_start_at"] = int(time.time() * 1000)
             total_steps += 1
 
             # 执行单步
-            step_result: StepResult = await self._step_runner.run_step(ctx, runtime)
+            step_result: StepResult = await self._step_runner.run_step(ctx, ctl)
 
             # 步后 hook：Transformer → Observer
             await self._run_after_step_hooks(ctx)
-            runtime._budget.step_count += 1
-            ctx = runtime._build_context()
+            ctl.budget.step_count += 1
+            ctx = ctl.build_context()
 
             # 记录 step history
-            runtime._step_history.append({
-                "step_index": runtime._step_index,
+            ctl.step_history.append({
+                "step_index": ctl.step_index,
                 "step_id": step.id,
                 "description": step.description,
                 "timestamp": time.time(),
@@ -157,14 +159,14 @@ class PlanExecuteLoop(LoopStrategy):
             # === Phase 3: Replan ===
             replan_needed = self._should_replan(step_result, step_index, plan)
             if replan_needed and self._replan_count < self._max_replans:
-                new_plan = await self._run_replanner(ctx, runtime, plan, step_index)
+                new_plan = await self._run_replanner(ctx, ctl, plan, step_index)
                 if new_plan is not None:
                     plan = new_plan
-                    runtime._plan = self._plan_to_dict(plan)
+                    ctl.plan = self._plan_to_dict(plan)
                     self._replan_count += 1
                     # 在新计划中定位当前进度
                     step_index = self._find_current_step_index(plan, ctx)
-                    ctx = runtime._build_context()
+                    ctx = ctl.build_context()
                     continue
 
             step_index += 1
@@ -179,7 +181,7 @@ class PlanExecuteLoop(LoopStrategy):
         Yields:
             流式事件字典。
         """
-        runtime = self._get_runtime(ctx)
+        ctl = self._controller
 
         # Phase 1: 规划
         yield {"type": "plan_start"}
@@ -188,13 +190,13 @@ class PlanExecuteLoop(LoopStrategy):
             yield {"type": "error", "error": "before_step 拦截"}
             return
 
-        plan = await self._run_planner(ctx, runtime)
+        plan = await self._run_planner(ctx, ctl)
         if plan is None:
             yield {"type": "error", "error": "规划失败"}
             return
 
-        runtime._plan = self._plan_to_dict(plan)
-        ctx = runtime._build_context()
+        ctl.plan = self._plan_to_dict(plan)
+        ctx = ctl.build_context()
         await self._run_after_step_hooks(ctx)
 
         yield {"type": "plan_ready", "plan": self._plan_to_dict(plan)}
@@ -204,19 +206,19 @@ class PlanExecuteLoop(LoopStrategy):
         total_steps = 0
 
         while step_index < len(plan.steps):
-            if runtime.status != "running":
+            if ctl.status != "running":
                 break
             if total_steps >= self._max_iterations:
                 break
 
             yield {"type": "step_start", "step_id": plan.steps[step_index].id}
 
-            runtime._context_payload.injected_context.append(plan.steps[step_index].description)
-            runtime._step_index += 1
-            ctx = runtime._build_context()
+            ctl.context_payload.injected_context.append(plan.steps[step_index].description)
+            ctl.step_index += 1
+            ctx = ctl.build_context()
             total_steps += 1
 
-            step_result = await self._step_runner.run_step(ctx, runtime)
+            step_result = await self._step_runner.run_step(ctx, ctl)
 
             if step_result.content:
                 yield {"type": "text", "content": step_result.content}
@@ -226,8 +228,8 @@ class PlanExecuteLoop(LoopStrategy):
                 yield {"type": "tool_end", "name": tc.name}
 
             await self._run_after_step_hooks(ctx)
-            runtime._budget.step_count += 1
-            ctx = runtime._build_context()
+            ctl.budget.step_count += 1
+            ctx = ctl.build_context()
 
             if step_result.is_blocked or step_result.status in (
                 StepStatus.PAUSED, StepStatus.ERROR,
@@ -239,20 +241,20 @@ class PlanExecuteLoop(LoopStrategy):
             if replan_needed and self._replan_count < self._max_replans:
                 yield {"type": "replan_start"}
 
-                new_plan = await self._run_replanner(ctx, runtime, plan, step_index)
+                new_plan = await self._run_replanner(ctx, ctl, plan, step_index)
                 if new_plan is not None:
                     plan = new_plan
-                    runtime._plan = self._plan_to_dict(plan)
+                    ctl.plan = self._plan_to_dict(plan)
                     self._replan_count += 1
                     step_index = self._find_current_step_index(plan, ctx)
-                    ctx = runtime._build_context()
+                    ctx = ctl.build_context()
 
                     yield {"type": "replan_ready", "plan": self._plan_to_dict(plan)}
                     continue
 
             step_index += 1
 
-    async def _run_planner(self, ctx: RuntimeContext, runtime: Any) -> Plan | None:
+    async def _run_planner(self, ctx: RuntimeContext, ctl: Any) -> Plan | None:
         """
         执行规划步骤。
 
@@ -261,17 +263,17 @@ class PlanExecuteLoop(LoopStrategy):
 
         Args:
             ctx: RuntimeContext 实例。
-            runtime: AgentRuntime 实例。
+            ctl: RuntimeController 实例。
 
         Returns:
             解析后的 Plan，或 None（规划失败）。
         """
         # 注入规划提示词
-        runtime._context_payload.injected_context.append(self._planner_prompt)
-        ctx = runtime._build_context()
+        ctl.context_payload.injected_context.append(self._planner_prompt)
+        ctx = ctl.build_context()
 
         # 走完整 LLM hook 管线
-        llm_response = await self._step_runner.run_llm_only(ctx, runtime)
+        llm_response = await self._step_runner.run_llm_only(ctx, ctl)
         if llm_response is None:
             return None
 
@@ -279,14 +281,14 @@ class PlanExecuteLoop(LoopStrategy):
         return self._parse_plan(llm_response.content)
 
     async def _run_replanner(
-        self, ctx: RuntimeContext, runtime: Any, current_plan: Plan, current_index: int
+        self, ctx: RuntimeContext, ctl: Any, current_plan: Plan, current_index: int
     ) -> Plan | None:
         """
         执行重新规划步骤。
 
         Args:
             ctx: RuntimeContext 实例。
-            runtime: AgentRuntime 实例。
+            ctl: RuntimeController 实例。
             current_plan: 当前计划。
             current_index: 当前执行的步骤索引。
 
@@ -301,10 +303,10 @@ class PlanExecuteLoop(LoopStrategy):
             '{"steps": [{"id": "...", "description": "...", "depends_on": []}]}'
         )
 
-        runtime._context_payload.injected_context.append(replanner_prompt)
-        ctx = runtime._build_context()
+        ctl.context_payload.injected_context.append(replanner_prompt)
+        ctx = ctl.build_context()
 
-        llm_response = await self._step_runner.run_llm_only(ctx, runtime)
+        llm_response = await self._step_runner.run_llm_only(ctx, ctl)
         if llm_response is None:
             return None
 
@@ -422,10 +424,9 @@ class PlanExecuteLoop(LoopStrategy):
         if not plan.steps:
             return 0
 
-        # 从 Runtime 的 _step_history 中找最后执行的 step_id
-        runtime = ctx.services.get("_runtime")
-        if runtime and runtime._step_history:
-            last_step_id = runtime._step_history[-1].get("step_id", "")
+        # 从 controller 的 step_history 中找最后执行的 step_id
+        if self._controller.step_history:
+            last_step_id = self._controller.step_history[-1].get("step_id", "")
             for i, step in enumerate(plan.steps):
                 if step.id == last_step_id:
                     return i + 1  # 从下一个步骤开始
@@ -445,23 +446,6 @@ class PlanExecuteLoop(LoopStrategy):
         if self._router is not None:
             return await self._router(ctx)
         return "llm"
-
-    def _get_runtime(self, ctx: RuntimeContext) -> Any:
-        """
-        从 RuntimeContext 获取关联的 AgentRuntime 实例。
-
-        Args:
-            ctx: RuntimeContext 实例。
-
-        Returns:
-            AgentRuntime 实例。
-        """
-        runtime = ctx.services.get("_runtime")
-        if runtime is None:
-            raise RuntimeError(
-                "PlanExecuteLoop 需要 Runtime 通过 ctx.services['_runtime'] 注入自身引用"
-            )
-        return runtime
 
     def _create_step_result(self, response: Any) -> StepResult:
         """将 LLM 响应封装为 StepResult。"""

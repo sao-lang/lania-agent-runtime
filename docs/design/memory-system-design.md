@@ -1673,90 +1673,91 @@ class MemoryCommitGate:
 
 ---
 
-## 7. 集成到 Runtime
+## 7. 集成到 Runtime（插拔模式）
 
-### 7.1 MemoryService 注入
+> ⚠️ **Runtime 不感知任何具体组件**。所有功能组件通过 Hook 机制插拔，
+> 用户负责创建实例并注册到 Runtime 的 Hook 挂载点。
 
-按照设计文档，`MemoryService` 通过 `RuntimeContext.services` 注入：
+### 7.1 协议解耦
 
-```python
-class RuntimeContext:
-    def __init__(self, ...):
-        self.services = {
-            "memory": MemoryService,   # ← 记忆服务
-            "rag": RagService,
-        }
+`MemoryService` 不直接暴露给 `AgentRuntime`，而是通过 `src.context._protocols`
+定义的两个协议实现模块间解耦：
+
+```
+包间零导入、零耦合：
+
+src.context (定义协议)
+  ├── _protocols.py              → 只声明方法签名，返回类型用 Any
+  │   ├── MemoryRecallProtocol   ← ContextManager 依赖
+  │   └── MemoryCommitProtocol   ← MemoryCommitHook 依赖
+  │
+  ├── _manager.py                → memory: MemoryRecallProtocol
+  └── context_hooks/
+      └── _assembler_hook.py     → manager: ContextManager
+
+src.memory (实现协议，不 import context)
+  ├── _service.py                → 天然满足两个协议（duck typing）
+  └── _hooks/_commit.py          → memory_service: MemoryCommitProtocol
+
+src.runtime (唯一接线点)
+  └── _builder.py                → 唯一 import MemoryService + ContextManager 的地方
 ```
 
-### 7.2 Hook 注册示例
+> **关键设计**：协议返回类型用 `Any`，数据映射在 `ContextManager._load()` 中完成。
+> `src.context` 不 import `src.memory` 中的任何东西，反之亦然。
+> 两个包是真正独立的、可单独测试的模块。
+
+### 7.2 用户侧注册（推荐）
 
 ```python
-# 构造阶段
+from src.runtime import AgentRuntime
+from src.runtime._types import HookPoint
+from src.memory import MemoryService
+from src.memory._hooks import MemoryCommitHook
+from src.context._manager import ContextManager
+from src.context.context_hooks import ContextAssemblerHook
+
+# 1. 用户组装组件
 memory_service = MemoryService(sqlite_store, ...)
 gate = MemoryCommitGate()
 compressor = CompressionManager(llm)
 evictor = EvictionManager(episodic_store)
+context_manager = ContextManager(memory=memory_service)
 
+# 2. 创建 Runtime（纯壳）
 runtime = AgentRuntime(
-    session_id=session_id,
-    llm_config=llm_config,
+    system_prompt="你是助手",
     llm_executor=OpenAIExecutor(llm_config),
-    services={"memory": memory_service},
 )
 
-# 注册治理组件
-runtime.on_before_step(MemoryRecallHook(memory_service))
-runtime.on_after_step(MemoryCommitHook(memory_service, gate, compressor))
-runtime.on_after_step(PatternSamplingHook(memory_service))
-runtime.on_session_end(SessionCleanupHook(memory_service, evictor))
-runtime.on_error(ErrorRecoveryHook(memory_service))  # checkpoint
+# 3. 用户自己接线——注册 Hook
+runtime.transform(HookPoint.BEFORE_LLM, ContextAssemblerHook(context_manager))
+runtime.transform(HookPoint.AFTER_STEP, MemoryCommitHook(memory_service, gate, compressor))
+runtime.observe(HookPoint.SESSION_END, SessionCleanupHook(evictor))
+runtime.observe(HookPoint.ON_ERROR, ErrorRecoveryHook(memory_service))
 ```
 
-### 7.3 Hook 实现范例
+### 7.3 Builder 快捷方式
+
+`RuntimeBuilder` 提供 `.memory()` 和 `.context()` 两个分离的快捷方法，
+在 `build()` 内部自动完成上述注册：
 
 ```python
-class MemoryRecallHook:
-    """
-    before_step Transform
-    注入记忆到 contextPayload。
-    """
-    primitive = "transform"
+runtime = (AgentRuntime.builder()
+    .system_prompt("你是助手")
+    .memory(MemoryService())                           # 数据层：记忆服务
+    .context(config=ContextConfig(compression_level=4)) # 编排层：上下文配置（可选）
+    .build())
+# ↑ .memory() 触发 ContextManager + MemoryCommitHook 注册
+# ↑ .context() 可选覆盖 ContextManager 配置
+```
 
-    def __init__(self, memory_service: MemoryService):
-        self._memory = memory_service
+> **为什么分开**：memory 和 context 是两个不同的关注点。
+> - memory：数据持久化和检索（存储什么）
+> - context：prompt 编排策略（怎么组织）
+> 分开后各自独立可替换，Builder 内部将两者组装为 ContextManager。
 
-    async def __call__(self, ctx: RuntimeContext):
-        query = ctx.messages[-1]["content"] if ctx.messages else ""
-        payload = await self._memory.recall(
-            session_id=ctx.session_id,
-            user_id=ctx.user_id,
-            query=query,
-            max_tokens=ctx.llm_config.max_tokens,
-        )
-        ctx.context_payload = payload
-
-
-class MemoryCommitHook:
-    """
-    after_step Transform
-    写入记忆。
-    """
-    primitive = "transform"
-
-    def __init__(self, memory_service, gate, compressor):
-        self._memory = memory_service
-        self._gate = gate
-        self._compressor = compressor
-
-    async def __call__(self, ctx: RuntimeContext):
-        step = StepContext(
-            user_message=ctx.last_user_message,
-            assistant_message=ctx.last_assistant_message,
-            tool_results=ctx.last_tool_results,
-            turn_index=ctx.step_index,
-            session_id=ctx.session_id,
-            user_id=ctx.user_id,
-        )
+### 7.3 Hook 实现范例
 
         # 门控判断
         decision = await self._gate.evaluate(

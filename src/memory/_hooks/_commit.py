@@ -14,7 +14,7 @@ from src.memory._management._gate import MemoryCommitGate
 from src.memory._types import StepContext
 
 if TYPE_CHECKING:
-    from src.memory._service import MemoryService
+    from src.context._protocols import MemoryCommitProtocol
     from src.runtime.context._context import RuntimeContext
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ class MemoryCommitHook:
 
     def __init__(
         self,
-        memory_service: MemoryService,
+        memory_service: MemoryCommitProtocol,
         gate: MemoryCommitGate | None = None,
     ) -> None:
         """

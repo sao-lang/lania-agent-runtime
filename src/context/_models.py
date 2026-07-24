@@ -4,9 +4,10 @@
 包含选取决策（SelectionDecision）、裸数据容器（RawContext）、
 概念摘要（ConceptSummary）等上下文管线专用的数据结构。
 
-与 src.memory._types 的关系：
-- RawContext 引用 EpisodicMemoryEntry（Memory 侧类型）
-- 其他类型为 Context 侧独有，不依赖 Memory
+与 src.memory._types 无依赖关系：
+- RawContext 的字段类型均使用 Python 内置类型（list / dict / str）
+- 实际运行时 episodic_memories 中存放的是 EpisodicMemoryEntry 实例
+- 但类型标注层面不引用任何 Memory 侧类型，保持包间零耦合
 """
 
 from __future__ import annotations

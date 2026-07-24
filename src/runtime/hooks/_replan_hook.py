@@ -61,14 +61,19 @@ class ReplanHook:
         if self._replan_count >= self._max_replans:
             return data
 
+        # 通过 controller 或 services["_runtime"] 兼容新旧接口
+        controller = ctx.services.get("_controller")
         runtime = ctx.services.get("_runtime")
-        if runtime is None:
+        if controller is None and runtime is None:
             return data
 
         if self._should_replan(ctx):
             new_plan = await self._replanner_fn(ctx)
             if new_plan is not None:
-                runtime._plan = new_plan
+                if controller is not None:
+                    controller.plan = new_plan
+                else:
+                    runtime._plan = new_plan  # type: ignore[union-attr]
                 self._replan_count += 1
 
         return data

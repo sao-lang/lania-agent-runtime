@@ -13,11 +13,11 @@ from src.context._budget import BudgetController, TokenManager
 from src.context._compressor import Compressor
 from src.context._config import ContextConfig
 from src.context._models import RawContext, SelectionDecision
+from src.context._protocols import MemoryRecallProtocol
 from src.context._selector import Selector
 from src.runtime.context._serializer import DefaultSerializer, MessageSerializer
 
 if TYPE_CHECKING:
-    from src.memory._service import MemoryService
     from src.runtime.context._context import RuntimeContext
 
 
@@ -27,11 +27,13 @@ class ContextManager:
 
     编排五阶段管线：SELECT → LOAD → COMPRESS → BUDGET → SERIALIZE。
     被 ContextAssemblerHook 在 before_llm 时调用。
+
+    通过 MemoryRecallProtocol 依赖记忆系统，不依赖具体 MemoryService 实现。
     """
 
     def __init__(
         self,
-        memory: MemoryService,
+        memory: MemoryRecallProtocol,
         selector: Selector | None = None,
         compressor: Compressor | None = None,
         budget_controller: BudgetController | None = None,
@@ -42,7 +44,7 @@ class ContextManager:
         初始化 ContextManager。
 
         Args:
-            memory: MemoryService 实例（唯一的外部依赖）。
+            memory: 满足 MemoryRecallProtocol 的实例。ContextManager 通过此协议加载记忆数据。
             selector: 选取策略。不提供则使用默认 Selector。
             compressor: 压缩机制。不提供则使用默认 Compressor。
             budget_controller: 预算执行器。不提供则使用默认 BudgetController。
@@ -61,12 +63,21 @@ class ContextManager:
         """
         五阶段编排，返回 llm_messages。
 
+        如果 config.enabled=False，跳过所有阶段，
+        直接使用 DefaultSerializer 序列化原始的 ContextPayload。
+
         Args:
             ctx: RuntimeContext 只读快照。
 
         Returns:
             messages 列表，可直接传入 LLM API。
         """
+        # 主开关：关闭时跳过整个管线
+        if not self._config.enabled:
+            # 直接使用原有 ContextPayload + Serializer
+            payload = self._build_fallback_payload(ctx)
+            return await self._serializer.serialize(payload)
+
         # Phase 1: SELECT——选取保留的原始消息
         decision = await self._selector.select(ctx, self._config)
 
@@ -74,7 +85,10 @@ class ContextManager:
         raw = await self._load(decision, ctx)
 
         # Phase 3: COMPRESS——构建 ContextPayload
-        payload = await self._compressor.compress(raw, decision, ctx)
+        payload = await self._compressor.compress(
+            raw, decision, ctx,
+            force_level=self._config.compression_level,
+        )
 
         # Phase 4: BUDGET——预算裁剪
         raw_messages = self._get_raw_messages(ctx, decision)
@@ -82,6 +96,33 @@ class ContextManager:
 
         # Phase 5: SERIALIZE——转换为 messages
         return await self._serialize(payload, decision, ctx)
+
+    def _build_fallback_payload(self, ctx: RuntimeContext) -> Any:
+        """
+        当管线关闭时，从 RuntimeContext 构建基本的 ContextPayload。
+
+        Args:
+            ctx: RuntimeContext。
+
+        Returns:
+            基本的 ContextPayload。
+        """
+        messages = list(ctx.messages)
+        system_prompt = ""
+        history = []
+        if messages:
+            if messages[0].get("role") == "system":
+                system_prompt = messages[0].get("content", "")
+                history = messages[1:]
+            else:
+                history = messages
+
+        from src.runtime.context._payload import ContextPayload
+
+        return ContextPayload(
+            system_prompt=system_prompt,
+            history=history,
+        )
 
     async def _load(
         self,

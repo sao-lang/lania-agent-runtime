@@ -36,9 +36,8 @@ class TestRuntimeBuilder:
             return {"role": "tool", "content": "done"}
 
         runtime = RuntimeBuilder().system_prompt("助手").tool(my_tool).build()
-        # tool_executor 会被 ToolDispatcher.dispatch 覆盖
-        assert runtime._tool_executor is not None
-        assert runtime._tool_dispatcher is not None
+        # 传入的自定义 tool_executor 保持不变
+        assert runtime._tool_executor is my_tool
 
     async def test_build_with_agent_id(self) -> None:
         runtime = RuntimeBuilder().system_prompt("助手").agent_id("my_bot").build()
@@ -104,8 +103,40 @@ class TestRuntimeBuilder:
 
         persistence = SQLitePersistence(":memory:")
         memory = MemoryService(persistence=persistence)
-        runtime = RuntimeBuilder().system_prompt("助手").memory(service=memory).build()
-        assert runtime._memory_service is memory
+        runtime = RuntimeBuilder().system_prompt("助手").memory(memory).build()
+        # 验证 Builder 创建了 ContextManager 并注册了 hook
+        assert "context_manager" in runtime._services
+        handlers = runtime._hooks.list()
+        names = [h.name for h in handlers]
+        assert "_context_assembler" in names
+        assert "_memory_commit" in names
+
+    async def test_context_with_memory(self) -> None:
+        """.context() 配合 .memory() 时，ContextConfig 传递给 ContextManager。"""
+        from src.memory._backends._sqlite import SQLitePersistence
+        from src.memory._service import MemoryService
+        from src.context import ContextConfig
+
+        mem = MemoryService(persistence=SQLitePersistence(":memory:"))
+        runtime = (RuntimeBuilder()
+            .system_prompt("助手")
+            .memory(mem)
+            .context(config=ContextConfig(compression_level=4, preserve_turns=5))
+            .build())
+        cfg = runtime._services["context_manager"]._config
+        assert cfg.compression_level == 4
+        assert cfg.preserve_turns == 5
+
+    async def test_context_without_memory_silent(self) -> None:
+        """.context() 单独使用时不崩溃，配置被静默忽略（带 warning）。"""
+        from src.context import ContextConfig
+
+        runtime = (RuntimeBuilder()
+            .system_prompt("助手")
+            .context(config=ContextConfig(compression_level=4))
+            .build())
+        # 没有 memory，就没有 context_manager
+        assert "context_manager" not in runtime._services
 
     async def test_loop_config(self) -> None:
         runtime = (

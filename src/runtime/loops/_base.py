@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 from src.runtime.loops._types import StepResult
 
 if TYPE_CHECKING:
+    from src.runtime._control import RuntimeController
     from src.runtime._steps._step_runner import StepRunner
     from src.runtime.context._context import RuntimeContext
     from src.runtime.hooks._registry import HookRegistry
@@ -32,12 +33,15 @@ class LoopStrategy(ABC):
       - 循环终止条件判断
       - 执行状态维护（pause / cancel / error 响应）
     单步逻辑委托给 StepRunner。
+
+    通过 RuntimeController 访问 Runtime 状态，不再使用 services["_runtime"] 后门。
     """
 
     def __init__(
         self,
         hooks: HookRegistry,
         step_runner: StepRunner,
+        controller: RuntimeController,
         router: Any | None = None,
     ) -> None:
         """
@@ -46,10 +50,12 @@ class LoopStrategy(ABC):
         Args:
             hooks: HookRegistry 实例，用于调用步级 hook。
             step_runner: StepRunner 实例，封装单步执行逻辑。
+            controller: RuntimeController 实例，受控的 Runtime 接口。
             router: 可选的路由函数，用于覆盖默认的结束判断。
         """
         self._hooks = hooks
         self._step_runner = step_runner
+        self._controller = controller
         self._router = router
 
     # ============ 公共接口 ============

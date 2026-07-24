@@ -25,7 +25,7 @@ from src.runtime.llm._models import FinishReason, LLMResponse
 from src.runtime.loops._types import StepResult, StepStatus
 
 if TYPE_CHECKING:
-    from src.runtime._runtime import AgentRuntime
+    from src.runtime._control import RuntimeController
     from src.runtime.context._context import RuntimeContext
 
 
@@ -66,7 +66,7 @@ class StepRunner:
         context_payload: ContextPayload,
         messages: list[dict],
         budget: Any,
-        runtime: AgentRuntime,
+        controller: RuntimeController,
     ) -> str | None:
         """
         执行 LLM step。
@@ -84,12 +84,12 @@ class StepRunner:
             context_payload: 上下文负载。
             messages: 消息列表。
             budget: 预算快照。
-            runtime: AgentRuntime 实例（用于状态更新）。
+            controller: RuntimeController 实例（受控 Runtime 接口）。
 
         Returns:
             阻断时的错误消息，或 None 表示正常执行。
         """
-        ctx = runtime._build_context()
+        ctx = controller.build_context()
 
         # before_llm transformers
         await self._hooks.run_transformers(HookPoint.BEFORE_LLM, context_payload, ctx)
@@ -107,7 +107,7 @@ class StepRunner:
             messages.append({"role": "assistant", "content": error_msg})
             return error_msg
         if isinstance(intercept_result, PauseAction):
-            await runtime._handle_pause(intercept_result)
+            await controller.handle_pause(intercept_result)
             return None
 
         # 序列化 ContextPayload → messages
@@ -158,7 +158,7 @@ class StepRunner:
         self,
         tool_call_request: dict | None,
         messages: list[dict],
-        runtime: AgentRuntime,
+        controller: RuntimeController,
     ) -> None:
         """
         执行 Tool step。
@@ -172,9 +172,9 @@ class StepRunner:
         Args:
             tool_call_request: 工具调用请求。
             messages: 消息列表。
-            runtime: AgentRuntime 实例。
+            controller: RuntimeController 实例。
         """
-        ctx = runtime._build_context()
+        ctx = controller.build_context()
 
         # before_tool interceptors
         intercept_result = await self._hooks.run_interceptors(
@@ -183,7 +183,7 @@ class StepRunner:
         if isinstance(intercept_result, BlockAction):
             return
         if isinstance(intercept_result, PauseAction):
-            await runtime._handle_pause(intercept_result)
+            await controller.handle_pause(intercept_result)
             return
 
         # Tool 调用
@@ -207,7 +207,7 @@ class StepRunner:
     async def run_llm_only(
         self,
         ctx: RuntimeContext,
-        runtime: AgentRuntime,
+        controller: RuntimeController,
         system_prompt_override: str = "",
     ) -> LLMResponse | None:
         """
@@ -223,14 +223,14 @@ class StepRunner:
 
         Args:
             ctx: RuntimeContext 实例。
-            runtime: AgentRuntime 实例（用于状态更新）。
+            controller: RuntimeController 实例。
             system_prompt_override: 可选的 system prompt 覆盖。
 
         Returns:
             LLMResponse 实例，或 None（被阻断时）。
         """
         # before_llm transformers
-        context_payload = runtime._context_payload
+        context_payload = controller.context_payload
         await self._hooks.run_transformers(HookPoint.BEFORE_LLM, context_payload, ctx)
 
         # before_serialize transformers（仅在 dirty 时执行）
@@ -244,15 +244,15 @@ class StepRunner:
         if isinstance(intercept_result, BlockAction):
             return None
         if isinstance(intercept_result, PauseAction):
-            await runtime._handle_pause(intercept_result)
+            await controller.handle_pause(intercept_result)
             return None
 
         # 序列化 ContextPayload → messages
         if context_payload.is_dirty:
             serialized = await self._serializer.serialize(context_payload)
             if serialized:
-                runtime._messages = (
-                    [serialized[0]] + runtime._messages[1:] if runtime._messages else serialized
+                controller.messages = (
+                    [serialized[0]] + controller.messages[1:] if controller.messages else serialized
                 )
 
         # LLM 调用（兼容新旧接口）
@@ -264,11 +264,11 @@ class StepRunner:
             llm_response: LLMResponse = await executor.execute(ctx)
         else:
             raw = await executor(ctx)
-            llm_response = runtime._legacy_to_llm_response(raw)
+            llm_response = controller.legacy_to_llm_response(raw)
 
         # 追加 LLM 回复
-        runtime._append_llm_response(llm_response)
-        runtime._last_llm_response = llm_response
+        controller.append_llm_response(llm_response)
+        controller.last_llm_response = llm_response
 
         # after_llm transformers
         await self._hooks.run_transformers(HookPoint.AFTER_LLM, llm_response, ctx)
@@ -278,7 +278,7 @@ class StepRunner:
             HookPoint.AFTER_LLM, llm_response, ctx
         )
         if isinstance(intercept_result, BlockAction):
-            runtime.status = "error"
+            controller.status = "error"
             return None
 
         # after_llm observers
@@ -293,7 +293,7 @@ class StepRunner:
     async def run_step(
         self,
         ctx: RuntimeContext,
-        runtime: AgentRuntime,
+        controller: RuntimeController,
     ) -> StepResult:
         """
         执行一步完整的"LLM + 可能的工具调用"。
@@ -313,7 +313,7 @@ class StepRunner:
             StepResult 实例——包含 finish_reason、status、tool_calls 等。
         """
         # === Phase 1: LLM 调用 ===
-        context_payload = runtime._context_payload
+        context_payload = controller.context_payload
 
         # before_llm transformers
         await self._hooks.run_transformers(HookPoint.BEFORE_LLM, context_payload, ctx)
@@ -328,16 +328,15 @@ class StepRunner:
         )
         if isinstance(intercept_result, BlockAction):
             error_msg = f"请求被拦截: {intercept_result.reason}"
-            runtime._messages.append({"role": "assistant", "content": error_msg})
-            runtime._error_state["last_error"] = RuntimeError(error_msg)
-            runtime.status = "error"
+            controller.messages.append({"role": "assistant", "content": error_msg})
+            controller.status = "error"
             return StepResult(
                 finish_reason=FinishReason.ERROR,
                 status=StepStatus.BLOCKED,
                 error=error_msg,
             )
         if isinstance(intercept_result, PauseAction):
-            await runtime._handle_pause(intercept_result)
+            await controller.handle_pause(intercept_result)
             return StepResult(
                 finish_reason=FinishReason.STOP,
                 status=StepStatus.PAUSED,
@@ -347,8 +346,8 @@ class StepRunner:
         if context_payload.is_dirty:
             serialized = await self._serializer.serialize(context_payload)
             if serialized:
-                runtime._messages = (
-                    [serialized[0]] + runtime._messages[1:] if runtime._messages else serialized
+                controller.messages = (
+                    [serialized[0]] + controller.messages[1:] if controller.messages else serialized
                 )
 
         # LLM 调用（兼容新旧接口）
@@ -364,11 +363,11 @@ class StepRunner:
             llm_response: LLMResponse = await executor.execute(ctx)
         else:
             raw = await executor(ctx)
-            llm_response = runtime._legacy_to_llm_response(raw)
+            llm_response = controller.legacy_to_llm_response(raw)
 
         # 追加 LLM 回复
-        runtime._append_llm_response(llm_response)
-        runtime._last_llm_response = llm_response
+        controller.append_llm_response(llm_response)
+        controller.last_llm_response = llm_response
 
         # after_llm transformers
         await self._hooks.run_transformers(HookPoint.AFTER_LLM, llm_response, ctx)
@@ -378,7 +377,7 @@ class StepRunner:
             HookPoint.AFTER_LLM, llm_response, ctx
         )
         if isinstance(intercept_result, BlockAction):
-            runtime.status = "error"
+            controller.status = "error"
             return StepResult(
                 finish_reason=FinishReason.ERROR,
                 status=StepStatus.BLOCKED,
@@ -386,13 +385,13 @@ class StepRunner:
             )
         if isinstance(intercept_result, AllowAction) and intercept_result.modified is not None:
             modified = intercept_result.modified
-            if runtime._messages and runtime._messages[-1].get("role") == "assistant":
+            if controller.messages and controller.messages[-1].get("role") == "assistant":
                 if isinstance(modified, LLMResponse):
-                    runtime._messages[-1] = runtime._llm_response_to_dict(modified)
+                    controller.messages[-1] = controller.llm_response_to_dict(modified)
                 elif isinstance(modified, dict):
-                    runtime._messages[-1] = modified
+                    controller.messages[-1] = modified
                 elif isinstance(modified, str):
-                    runtime._messages[-1]["content"] = modified
+                    controller.messages[-1]["content"] = modified
 
         # after_llm observers
         await self._hooks.run_observers(
@@ -405,7 +404,7 @@ class StepRunner:
         tool_calls = list(llm_response.tool_calls)
         for tc in tool_calls:
             # 重建 ctx：确保 ctx.messages 包含刚追加的 LLM 回复（含 tool_calls）
-            fresh_ctx = runtime._build_context()
+            fresh_ctx = controller.build_context()
 
             # before_tool interceptors
             tool_ctx = {"tool_name": tc.name, "arguments": tc.arguments}
@@ -415,7 +414,7 @@ class StepRunner:
             if isinstance(intercept_result, BlockAction):
                 continue
             if isinstance(intercept_result, PauseAction):
-                await runtime._handle_pause(intercept_result)
+                await controller.handle_pause(intercept_result)
                 return StepResult(
                     finish_reason=FinishReason.TOOL_CALLS,
                     status=StepStatus.PAUSED,
@@ -425,16 +424,16 @@ class StepRunner:
             if self._tool_executor is not None:
                 tool_result = await self._tool_executor(fresh_ctx)
                 if isinstance(tool_result, dict):
-                    runtime._messages.append(tool_result)
+                    controller.messages.append(tool_result)
                 else:
-                    runtime._messages.append({"role": "tool", "content": str(tool_result)})
+                    controller.messages.append({"role": "tool", "content": str(tool_result)})
 
                 # after_tool transformers（用最新 ctx）
-                fresh_ctx2 = runtime._build_context()
+                fresh_ctx2 = controller.build_context()
                 await self._hooks.run_transformers(HookPoint.AFTER_TOOL, tool_result, fresh_ctx2)
 
             # after_tool observers（用最新 ctx）
-            fresh_ctx3 = runtime._build_context()
+            fresh_ctx3 = controller.build_context()
             await self._hooks.run_observers(
                 HookPoint.AFTER_TOOL,
                 {"type": "after_tool", "tool_name": tc.name},

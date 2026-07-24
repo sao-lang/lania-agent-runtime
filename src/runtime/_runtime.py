@@ -36,7 +36,6 @@ from src.runtime.context._serializer import (
 from src.runtime.hooks._registry import HookRegistry
 from src.runtime.llm._models import FinishReason, LLMResponse, LLMUsage
 from src.runtime.loops import LoopStrategy, LoopStrategyFactory
-from src.tools import MCPServerManager, SkillManager, ToolDispatcher, ToolRegistry
 
 if TYPE_CHECKING:
     from src.runtime._builder import RuntimeBuilder
@@ -70,13 +69,9 @@ class AgentRuntime:
         serializer: MessageSerializer | None = None,
         services: dict[str, Any] | None = None,
         agent_id: str = "",
-        tools: ToolRegistry | None = None,
-        mcp: MCPServerManager | None = None,
-        skills: SkillManager | None = None,
-        memory_service: Any | None = None,
     ) -> None:
         """
-        初始化 AgentRuntime。
+        初始化 AgentRuntime——纯壳，不感知任何外部组件。
 
         Args:
             system_prompt: 系统提示词。
@@ -89,16 +84,9 @@ class AgentRuntime:
                 "workflow"，默认 "react"）。
             router: 路由函数。
             serializer: 消息序列化器。不提供则使用 DefaultSerializer。
-            services: 外部服务引用字典。
+            services: 外部服务引用字典。Builder 可在 build() 中注入
+                memory_service / context_manager / tools_schema 等服务。
             agent_id: Agent 标识。
-            tools: ToolRegistry 实例。提供时自动创建 ToolDispatcher
-                并设为 tool_executor，同时注册 before_llm Transform
-                自动刷新 tools_schema。优先级高于 tool_executor。
-            mcp: MCPServerManager 实例。提供时自动集成到 ToolDispatcher。
-            skills: SkillManager 实例。提供时自动注册 before_llm
-                Transform 注入领域知识。
-            memory_service: MemoryService 实例。提供时自动注册 after_step
-                Transform 写入持久化记忆。
         """
         self.session_id: str = f"sess_{uuid.uuid4().hex[:12]}"
         self.agent_id: str = agent_id or f"agent_{uuid.uuid4().hex[:8]}"
@@ -121,9 +109,17 @@ class AgentRuntime:
             priority=999,
         )
 
-        # 外部服务（注入自身引用供 LoopStrategy / StepRunner 使用）
+        # 外部服务（仅用于 Hook 间共享数据）
         self._services: dict[str, Any] = dict(services or {})
-        self._services["_runtime"] = self
+        # 注入 controller 供 hook 使用（替代旧的 services["_runtime"] 后门）
+        # 注意：services["_runtime"] 已移除——hook 如需访问 Runtime 状态，
+        # 应通过 services["_controller"] 获取 RuntimeController 实例
+
+        # RuntimeController —— StepRunner 和 LoopStrategy 的受控接口
+        from src.runtime._control import RuntimeController
+
+        self._controller = RuntimeController(self)
+        self._services["_controller"] = self._controller
 
         # StepRunner —— 被所有 LoopStrategy 共享
         self._step_runner = StepRunner(
@@ -133,71 +129,6 @@ class AgentRuntime:
             serializer=self._serializer,
         )
 
-        # Tool / MCP / Skill 原语集成
-        # 创建 ToolDispatcher（整合 ToolRegistry + MCPServerManager）
-        self._tool_dispatcher: ToolDispatcher | None = None
-        self._mcp_manager: MCPServerManager | None = mcp
-        self._skill_manager: SkillManager | None = skills
-
-        # 确定 ToolRegistry
-        tool_registry = tools if tools is not None else ToolRegistry()
-
-        # 创建 ToolDispatcher（传入 ToolRegistry 和可选的 MCPServerManager）
-        self._tool_dispatcher = ToolDispatcher(
-            tool_registry=tool_registry,
-            mcp_manager=mcp,
-        )
-        # 将 ToolDispatcher.dispatch 设为 tool_executor
-        self._tool_executor = self._tool_dispatcher.dispatch
-        self._step_runner._tool_executor = self._tool_executor
-        # 注册 before_llm Transform 自动刷新 tools_schema
-        self._hooks.register(
-            HookPoint.BEFORE_LLM,
-            self._inject_tools_schema,
-            primitive=PrimitiveType.TRANSFORM,
-            name="_tools_schema_refresh",
-            priority=100,
-        )
-
-        # Skill 原语集成：注册 before_llm Transform 注入领域知识
-        if skills is not None:
-            self._hooks.register(
-                HookPoint.BEFORE_LLM,
-                skills.get_before_llm_hook(),
-                primitive=PrimitiveType.TRANSFORM,
-                name="_skill_inject",
-                priority=200,
-            )
-
-        # Memory 原语集成
-        self._memory_service = memory_service
-        if memory_service is not None:
-            from src.context._manager import ContextManager
-            from src.context.context_hooks import ContextAssemblerHook
-            from src.memory._hooks import MemoryCommitHook
-
-            # 创建 ContextManager，编排上下文五阶段管线
-            context_manager = ContextManager(memory=memory_service)
-            self._services["context_manager"] = context_manager
-
-            # before_llm Transform：上下文编排（在 tools 和 skills 之后）
-            self._hooks.register(
-                HookPoint.BEFORE_LLM,
-                ContextAssemblerHook(context_manager),
-                primitive=PrimitiveType.TRANSFORM,
-                name="_context_assembler",
-                priority=300,
-            )
-
-            # after_step Transform：写入持久化记忆
-            self._hooks.register(
-                HookPoint.AFTER_STEP,
-                MemoryCommitHook(memory_service),
-                primitive=PrimitiveType.TRANSFORM,
-                name="_memory_commit",
-                priority=500,
-            )
-
         # LoopStrategy —— 使用新接口或旧接口
         if loop_strategy is not None:
             self._loop = loop_strategy
@@ -205,12 +136,13 @@ class AgentRuntime:
             # 旧接口：保留 loop_executor 行为
             self._loop = None  # type: ignore[assignment]
         else:
-            # 通过工厂创建
+            # 通过工厂创建（传入 controller 替代 services["_runtime"] 后门）
             self._register_default_strategies()
             self._loop = LoopStrategyFactory.create(
                 loop_strategy_name,
                 hooks=self._hooks,
                 step_runner=self._step_runner,
+                controller=self._controller,
                 router=self._router,
             )
 
@@ -462,40 +394,6 @@ class AgentRuntime:
                 "last_error"
             ] else None,
         )
-
-    # ============ 工具管理 ============
-
-    @property
-    def tool_registry(self) -> ToolRegistry | None:
-        """
-        获取当前关联的 ToolRegistry。
-
-        Returns:
-            ToolRegistry 实例或 None。
-        """
-        if self._tool_dispatcher is not None:
-            return self._tool_dispatcher._tools
-        return None
-
-    @property
-    def mcp_manager(self) -> MCPServerManager | None:
-        """
-        获取当前关联的 MCPServerManager。
-
-        Returns:
-            MCPServerManager 实例或 None。
-        """
-        return self._mcp_manager
-
-    @property
-    def skill_manager(self) -> SkillManager | None:
-        """
-        获取当前关联的 SkillManager。
-
-        Returns:
-            SkillManager 实例或 None。
-        """
-        return self._skill_manager
 
     # ============ 流式执行 ============
 
@@ -933,29 +831,6 @@ class AgentRuntime:
     ) -> None:
         """Runtime 内部：更新 ContextPayload。"""
         self._context_payload = updater(self._context_payload)
-
-    async def _inject_tools_schema(
-        self, data: ContextPayload, ctx: RuntimeContext
-    ) -> ContextPayload:
-        """
-        before_llm Transform：自动将当前工具列表注入到 services。
-
-        每次 LLM 调用前执行，确保 tools_schema 始终与当前注册的工具保持一致
-        （包含 ToolRegistry 中的本地工具和 MCPServerManager 中的 MCP 工具）。
-        通过 self._services 传递，RuntimeContext._build_context() 会将其拷贝到
-        ctx.services，供 LLMExecutor._get_tools_schema() 消费。
-
-        Args:
-            data: ContextPayload 实例。
-            ctx: RuntimeContext 实例。
-
-        Returns:
-            不变的 ContextPayload 实例。
-        """
-        if self._tool_dispatcher is not None:
-            tools = self._tool_dispatcher.all_tools()
-            self._services["tools_schema"] = [t.to_openai_schema() for t in tools]
-        return data
 
     async def _get_next_step(self, ctx: RuntimeContext) -> str:
         """

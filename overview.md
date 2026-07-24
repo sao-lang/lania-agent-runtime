@@ -1,5 +1,26 @@
 ### 2026-07-24
 
+#### 7. 全组件解耦：Runtime 纯壳化 + 协议化 + Context/Memory API 分离
+
+- **时间：** 2026-07-24
+- **发起人：** user
+- **修改文件：**
+  - `src/context/_protocols.py` — 新增：MemoryRecallProtocol / MemoryCommitProtocol（模块间解耦接口）
+  - `src/context/_manager.py` — ContextManager 依赖 MemoryRecallProtocol 而非具体 MemoryService
+  - `src/context/__init__.py` — 导出新增协议
+  - `src/memory/_hooks/_commit.py` — MemoryCommitHook 依赖 MemoryCommitProtocol 而非具体 MemoryService
+  - `src/runtime/_runtime.py` — 瘦身 __init__，移除 memory_service / tools / mcp / skills / context_config 参数
+  - `src/runtime/_builder.py` — 承载所有接线逻辑（ToolDispatcher 创建、Hook 注册等）；分离 .memory() / .context() API
+  - `docs/design/agent-runtime-design.md` — 新增 §"模块间解耦协议"章节；更新 Builder 示例
+  - `docs/design/context-management-redesign.md` — 更新 ContextManager 签名使用 MemoryRecallProtocol
+  - `docs/design/memory-system-design.md` — 新增 §7.1 协议解耦说明；更新 Builder 示例
+  - `docs/design/tool-mcp-skill-design.md` — 重写 §7 Runtime 集成，移除 AgentRuntime 参数
+  - `docs/design/llm-executor-design.md` — 更新 §6.6 内置 Transform 说明
+  - `README.md` — 更新手动接线示例；分离 memory/context API
+- **修改内容：** 全组件解耦改造。(1) 协议化：在 `src.context` 包中定义 `MemoryRecallProtocol` 和 `MemoryCommitProtocol`，`ContextManager` / `MemoryCommitHook` 依赖协议而非具体类，`src.context` 与 `src.memory` 双向零导入。(2) Runtime 纯壳化：`AgentRuntime.__init__` 删除 `memory_service` / `tools` / `mcp` / `skills` / `context_config` 参数，所有接线逻辑移到 `RuntimeBuilder.build()`。(3) API 分离：`.memory(service)` 只管记忆数据层，`.context(config)` 只管上下文编排层，各司其职。
+- **复盘结果：** 全部测试通过，ruff lint 零报错。
+- **潜在风险：** 无。向后兼容：Builder 快捷方式保持不变，手动接线用户需参照新文档调整 `AgentRuntime` 构造参数。
+
 #### 6. 集成上下文与记忆系统（Context + Memory 原语）
 
 - **时间：** 2026-07-24
@@ -69,7 +90,7 @@
   - `tests/test_tools_mcp_integration.py` — 6 个集成测试（真实子进程通信）
   - `tests/test_tools_mcp.py` — MCP 单元测试（含 mock）
   - `tests/test_tools_skill.py` — Skill 单元测试（含真实文件 I/O）
-- **修改内容：** 实现 MCP 和 Skill 原语。MCP 支持 stdio/sse 传输、initialize/list_tools/call_tool 完整协议。Skill 支持 SKILL.md 扫描、关键词匹配、auto_inject 无条件注入、before_llm hook 自动注入。集成到 ToolDispatcher（MCP 前缀路由）和 AgentRuntime（mcp/skills 参数 + Builder 链式 API）。编写了 6 个真实集成测试，通过启动 Python 子进程模拟 MCP Server 验证完整的 stdio 协议交互。
+- **修改内容：** 实现 MCP 和 Skill 原语。MCP 支持 stdio/sse 传输、initialize/list_tools/call_tool 完整协议。Skill 支持 SKILL.md 扫描、关键词匹配、auto_inject 无条件注入、before_llm hook 自动注入。集成到 ToolDispatcher（MCP 前缀路由）和 AgentRuntime（mcp/skills 参数 + Builder 链式 API，注：mcp/skills 参数在后续 #7 重构中已移除，现由 Builder 接管）。编写了 6 个真实集成测试。
 - **复盘结果：** 448 测试全部通过（含 6 个真实子进程集成测试），ruff lint 零报错。MCP client 编码问题通过 utf-8-sig + latin-1 兜底策略解决。
 - **潜在风险：** 无。向后兼容：mcp/skills 参数可选。
 
@@ -90,7 +111,7 @@
   - `src/runtime/_builder.py` — 新增 tool_registry() 链式方法
   - `src/runtime/__init__.py` — 导出 ToolSpec/ToolRegistry/ToolDispatcher
   - `tests/test_tools.py` — 33 个单元测试（ToolSpec/ToolRegistry/ToolDispatcher/Runtime集成/Builder集成）
-- **修改内容：** 按照设计文档 tool-mcp-skill-design.md 实现 Tool 原语。ToolSpec 定义工具数据结构，ToolRegistry 管理注册/描述/执行（覆盖注册策略），ToolDispatcher 统一调度（当前仅 Tool 路由，MCP 前缀路由为占位）。通过 tools 参数集成到 AgentRuntime，自动创建 ToolDispatcher 并设为 tool_executor，注册 before_llm Transform 自动刷新 tools_schema。RuntimeBuilder 新增 tool_registry() 方法。MCP 和 Skill 原语预留目录结构，待后续迭代实现。
+- **修改内容：** 按照设计文档 tool-mcp-skill-design.md 实现 Tool 原语。ToolSpec 定义工具数据结构，ToolRegistry 管理注册/描述/执行（覆盖注册策略），ToolDispatcher 统一调度（当前仅 Tool 路由，MCP 前缀路由为占位）。通过 tools 参数集成到 AgentRuntime（注：该参数在后续 #7 重构中已移除，现由 Builder 接管）。RuntimeBuilder 新增 tool_registry() 方法。MCP 和 Skill 原语预留目录结构，待后续迭代实现。
 - **复盘结果：** 366 测试全部通过（原有 333 + 新增 33），tools 包覆盖率 98.96%，ruff lint 零报错。
 - **潜在风险：** 无。向后兼容：旧 tool_executor 接口保留，tools 参数可选。
 

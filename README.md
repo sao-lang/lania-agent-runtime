@@ -2,9 +2,13 @@
 
 一个**以治理为核心**的 Agent 运行时框架。核心设计理念：
 
-- **Runtime 管执行闭环** —— 状态机 + Step Loop，最小必要状态
+- **Runtime 是纯壳** —— 不感知任何具体组件，所有功能通过 Hook 插拔
 - **Hook 管治理逻辑** —— 12 个挂载点 × 5 种原语类型，无状态纯函数
 - **状态分层持有** —— Runtime 持有执行状态，外部服务持有持久化状态，互不越界
+
+> 所有扩展（LLM、工具、记忆、上下文管理）都是**用户侧注册**的 Hook。
+> `RuntimeBuilder` 提供快捷方式自动完成接线，但 `AgentRuntime` 本身
+> 不依赖任何外部组件包。
 
 适用于需要精细管控 LLM 调用、工具执行、审计追踪、人工审批的企业级 Agent 应用。
 
@@ -35,55 +39,63 @@ uv pip install lania-agent-runtime
 pip install lania-agent-runtime
 ```
 
-### 模式 A：开箱即用（~15 行）
+### 模式 A：纯手动，完全解耦（~20 行）
+
+Runtime 是纯壳，所有功能通过 Hook 插拔：
 
 ```python
 import asyncio
 from src.runtime import AgentRuntime
+from src.runtime._types import HookPoint, PrimitiveType
 from src.runtime.llm import OpenAILLMExecutor, LLMExecutorConfig
 
 async def main():
-    executor = OpenAILLMExecutor(LLMExecutorConfig(
-        model="gpt-4o",
-        api_key="sk-...",
-    ))
+    # 1. 创建 Runtime（纯壳）
+    agent = AgentRuntime(system_prompt="你是电商客服助手，回答简洁友好。")
 
-    agent = AgentRuntime(
-        system_prompt="你是电商客服助手，回答简洁友好。",
-        llm_executor=executor,
-    )
+    # 2. 用户组装 LLM
+    executor = OpenAILLMExecutor(LLMExecutorConfig(model="gpt-4o", api_key="sk-..."))
 
-    result = await agent.run("帮我查一下订单 OD20240723001 的状态")
+    # 3. 用户自己接线——替换 step_runner 的 llm_executor
+    agent.set_llm_executor(executor)
+
+    # 4. 用户注册治理 Hook
+    @agent.on(HookPoint.AFTER_LLM)
+    async def log_usage(event, ctx):
+        print(f"token 用量: {event.get('response', {}).usage.total_tokens}")
+
+    result = await agent.run("帮我查一下订单")
     print(result.content)
 
 asyncio.run(main())
 ```
 
-> 💡 也可以通过 `RuntimeBuilder` 链式构造：
->
-> ```python
-> from src.runtime import AgentRuntime
->
-> agent = (
->     AgentRuntime.builder()
->     .system_prompt("你是电商客服助手，回答简洁友好。")
->     .llm(model="gpt-4o", api_key="sk-...")
->     .build()
-> )
-> # 注：builder 自动创建 OpenAILLMExecutor（需环境变量中有 api_key）
-> result = await agent.run("查订单")
-> ```
+### 模式 B：Builder 快捷（~10 行）
+
+`RuntimeBuilder` 在 `build()` 内部自动完成接线：
+
+```python
+from src.runtime import AgentRuntime
+
+agent = (
+    AgentRuntime.builder()
+    .system_prompt("你是电商客服助手，回答简洁友好。")
+    .llm(model="gpt-4o", api_key="sk-...")
+    .build()
+)
+# ↑ build() 内部自动创建 OpenAILLMExecutor 并 set_llm_executor
+result = await agent.run("查订单")
+```
 
 ---
 
 ## 🚀 使用模式
 
-### 模式 B：加工具（~30 行）
+### 模式 C：加工具（Builder 快捷）
 
 ```python
 import asyncio
 from src.runtime import AgentRuntime
-from src.runtime.llm import OpenAILLMExecutor, LLMExecutorConfig
 from src.tools import ToolRegistry, ToolSpec
 
 async def query_order(order_id: str) -> dict:
@@ -92,7 +104,6 @@ async def query_order(order_id: str) -> dict:
 async def get_user_info(user_id: str) -> dict:
     return {"name": "张三", "level": "VIP"}
 
-# 注册工具
 registry = ToolRegistry()
 registry.register(ToolSpec(
     name="query_order", description="查询订单状态",
@@ -106,11 +117,12 @@ registry.register(ToolSpec(
 ))
 
 async def main():
-    executor = OpenAILLMExecutor(LLMExecutorConfig(model="gpt-4o", api_key="sk-..."))
-    agent = AgentRuntime(
-        system_prompt="你是电商客服助手。",
-        llm_executor=executor,
-        tools=registry,  # ← 传入 ToolRegistry，自动注册工具调度
+    agent = (
+        AgentRuntime.builder()
+        .system_prompt("你是电商客服助手。")
+        .llm(model="gpt-4o", api_key="sk-...")
+        .tool_registry(registry)  # ← Builder 帮你接线
+        .build()
     )
     result = await agent.run("帮我查一下订单 OD20240723001 的状态")
     print(result.content)
@@ -118,10 +130,9 @@ async def main():
 asyncio.run(main())
 ```
 
-> 💡 传入 `tools` 参数后，Runtime 会自动创建 `ToolDispatcher` 并设为 `tool_executor`，
-> 同时注册 `before_llm` Transform 自动刷新 tools_schema。
+> 💡 `build()` 内部自动创建 `ToolDispatcher` 并注册 `before_llm` Transform 刷新 tools_schema。
 
-### 模式 C：加治理（~50 行）
+### 模式 D：加治理（~50 行）
 
 ```python
 import asyncio
@@ -164,7 +175,7 @@ asyncio.run(main())
 > ⚠️ `HumanApprovalPlugin`、`BudgetPlugin`、`AuditPlugin` 等治理插件尚在规划中。
 > 当前可用的治理组件：`HumanApprovalInterceptor`、`SelfCritiqueHook`、`DualModelCritiqueHook`、`ReplanHook`。
 
-### 模式 D：完全自定义（100+ 行）
+### 模式 E：完全自定义（100+ 行）
 
 ```python
 from src.runtime import AgentRuntime
@@ -176,7 +187,6 @@ from src.runtime.hooks import HookRegistry, PrimitiveType, HookPoint
 class MyCustomExecutor(OpenAILLMExecutor):
     async def execute(self, ctx):
         response = await super().execute(ctx)
-        # 后处理
         response.content = self._post_process(response.content)
         return response
 
@@ -194,18 +204,11 @@ async def my_threat_scanner(data, ctx):
     from src.runtime._types import AllowAction
     return AllowAction()
 
-registry = HookRegistry()
-registry.register(
-    HookPoint.BEFORE_LLM, my_threat_scanner,
-    primitive=PrimitiveType.INTERCEPT,
-)
-
-runtime = AgentRuntime(
-    hooks=registry,
-    llm_executor=MyCustomExecutor(LLMExecutorConfig(model="gpt-4o", api_key="sk-...")),
-    router=my_router,
-)
-# 注：LoopStrategy 通过 loop_strategy_name 参数或 LoopStrategyFactory 设置
+# 纯手动注册——Runtime 不感知任何组件
+runtime = AgentRuntime(system_prompt="你是助手。")
+runtime.set_llm_executor(MyCustomExecutor(LLMExecutorConfig(model="gpt-4o", api_key="sk-...")))
+runtime.set_router(my_router)
+runtime.intercept(HookPoint.BEFORE_LLM, my_threat_scanner, name="threat_scanner")
 ```
 
 ---
@@ -219,22 +222,72 @@ runtime = AgentRuntime(
 | **ContextPayload** | 上下文中间层，Hook 操作此对象，Runtime 序列化为 LLM messages |
 | **RuntimeContext** | Hook 看到的只读快照 + 受限写接口 |
 | **HookRegistry** | 分层编排引擎：Transform 串行 → Intercept 短路 → Observer 并行 |
+| **插拔设计** | Runtime 是纯壳，不感知 LLM/工具/记忆等具体组件。`RuntimeBuilder` 提供快捷接线，用户也可手动注册任意 Hook |
 
 详细设计文档见 [`docs/design/agent-runtime-design.md`](docs/design/agent-runtime-design.md)。
 
 ---
 
-## 🧩 扩展生态（规划中）
+## 🧩 扩展生态
 
-| 扩展 | 说明 |
+所有扩展通过 Hook 机制插拔，Runtime 不感知具体组件。
+
+### Memory（记忆系统）
+
+```python
+from src.runtime import AgentRuntime
+from src.runtime._types import HookPoint
+from src.memory import MemoryService
+from src.memory._backends._sqlite import SQLitePersistence
+from src.memory._hooks import MemoryCommitHook
+from src.context import ContextConfig
+from src.context._manager import ContextManager
+from src.context.context_hooks import ContextAssemblerHook
+
+# 方式 A：手动接线（完全解耦）
+persistence = SQLitePersistence("./memory.db")
+memory = MemoryService(persistence=persistence)
+ctx_mgr = ContextManager(memory=memory)          # ContextManager 依赖 MemoryRecallProtocol
+
+runtime = AgentRuntime(system_prompt="你是助手")
+runtime.set_llm_executor(my_executor)
+runtime.transform(HookPoint.BEFORE_LLM, ContextAssemblerHook(ctx_mgr))
+runtime.transform(HookPoint.AFTER_STEP, MemoryCommitHook(memory))  # 依赖 MemoryCommitProtocol
+
+# 方式 B：Builder 快捷——memory 和 context 是分开的 API
+runtime = (AgentRuntime.builder()
+    .system_prompt("你是助手")
+    .llm(executor=my_executor)
+    .memory(MemoryService(persistence=SQLitePersistence("./memory.db")))  # 数据层
+    .context(config=ContextConfig(compression_level=4))                   # 编排层（可选）
+    .build())
+```
+
+记忆系统包含 5 层：工作记忆（崩溃恢复）、情景记忆（对话历史）、实体记忆（用户画像）、语义知识（概念图谱）、行为模式（风格偏好）。
+
+详情见 [`docs/design/memory-system-design.md`](docs/design/memory-system-design.md) 和 [`docs/design/context-management-redesign.md`](docs/design/context-management-redesign.md)。
+
+### Guardrails（治理组件，规划中）
+
+| 组件 | 说明 |
 |------|------|
-| Memory | 5 层记忆系统（工作记忆/情景/实体/语义/行为模式） |
-| Guardrails | 治理组件（预算控制、人工审批、限流） |
-| Anthropic Provider | Anthropic Claude Provider 适配器 |
-| MCP | Model Context Protocol 工具协议 |
-| Skill | Skill 预置能力加载 |
+| 预算控制 | Token/步数/费用上限 |
+| 人工审批 | 敏感操作前暂停等待确认 |
+| 限流 | 单位时间调用次数限制 |
 
-> 以上扩展处于规划阶段，核心骨架已预留扩展点（`PluggableComponent` / `Plugin` 协议）。
+### Anthropic Provider
+
+Anthropic Claude Provider 适配器（可通过 `LLMProvider` 接口接入）。
+
+### MCP
+
+Model Context Protocol 工具协议，已在 `src/tools/_mcp/` 中实现基础骨架。
+
+### Skill
+
+Skill 预置能力加载，已在 `src/tools/_skill/` 中实现。
+
+> 以上扩展均通过 Hook 注册到 Runtime，`AgentRuntime` 本身不依赖任何扩展包。
 
 ---
 

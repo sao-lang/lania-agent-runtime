@@ -4,6 +4,7 @@ StepRunner 分支覆盖——覆盖剩余未覆盖路径。
 
 from __future__ import annotations
 
+from src.runtime._control import RuntimeController
 from src.runtime._runtime import AgentRuntime
 from src.runtime._steps._step_runner import StepRunner
 from src.runtime._types import (
@@ -28,7 +29,7 @@ class TestStepRunnerBranches:
             return {"role": "assistant", "content": "dict response"}
 
         runner = StepRunner(hooks=hooks, llm_executor=mock_llm)
-        await runner.run_llm_step(runtime._context_payload, messages, runtime._budget, runtime)
+        await runner.run_llm_step(runtime._context_payload, messages, runtime._budget, RuntimeController(runtime))
         assert any(m.get("content") == "dict response" for m in messages)
 
     async def test_llm_response_str_path(self) -> None:
@@ -41,7 +42,7 @@ class TestStepRunnerBranches:
             return "string response"
 
         runner = StepRunner(hooks=hooks, llm_executor=mock_llm)
-        await runner.run_llm_step(runtime._context_payload, messages, runtime._budget, runtime)
+        await runner.run_llm_step(runtime._context_payload, messages, runtime._budget, RuntimeController(runtime))
         assert any(m.get("content") == "string response" for m in messages)
 
     async def test_after_llm_block_action(self) -> None:
@@ -64,7 +65,7 @@ class TestStepRunnerBranches:
 
         runner = StepRunner(hooks=hooks, llm_executor=mock_llm)
         result = await runner.run_llm_step(
-            runtime._context_payload, messages, runtime._budget, runtime
+            runtime._context_payload, messages, runtime._budget, RuntimeController(runtime)
         )
         assert result == "after_llm 拦截"
 
@@ -87,7 +88,7 @@ class TestStepRunnerBranches:
             return {"role": "assistant", "content": "original"}
 
         runner = StepRunner(hooks=hooks, llm_executor=mock_llm)
-        await runner.run_llm_step(runtime._context_payload, messages, runtime._budget, runtime)
+        await runner.run_llm_step(runtime._context_payload, messages, runtime._budget, RuntimeController(runtime))
         # 验证消息被修改
         assert any(m.get("content") == "fixed" for m in messages)
 
@@ -114,5 +115,5 @@ class TestStepRunnerBranches:
             return {"role": "assistant", "content": "ok"}
 
         runner = StepRunner(hooks=hooks, llm_executor=mock_llm)
-        await runner.run_llm_step(runtime._context_payload, messages, runtime._budget, runtime)
+        await runner.run_llm_step(runtime._context_payload, messages, runtime._budget, RuntimeController(runtime))
         assert "before_serialize" in serialized

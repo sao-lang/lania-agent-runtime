@@ -47,6 +47,8 @@ class Compressor:
         raw: RawContext,
         decision: SelectionDecision,
         ctx: RuntimeContext,
+        *,
+        force_level: int = 0,
     ) -> ContextPayload:
         """
         根据可用 token 和选取决策，构建 ContextPayload。
@@ -55,12 +57,13 @@ class Compressor:
             raw: MemoryService.recall_raw 返回的裸数据。
             decision: Selector 的选取决策。
             ctx: RuntimeContext 只读快照。
+            force_level: 强制指定压缩层级。0 表示自动选择。
 
         Returns:
             构建好的 ContextPayload（尚未经过 BudgetController 裁剪）。
         """
         available = self._estimate_available(ctx)
-        level = self._select_level(available)
+        level = force_level if force_level > 0 else self._select_level(available)
 
         # 构建 system_prompt
         system_prompt = self._get_system_prompt(ctx)

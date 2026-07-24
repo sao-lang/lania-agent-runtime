@@ -67,13 +67,10 @@ class TestAgentRuntimeRegister:
         assert handler_id is not None
 
         handlers = runtime._hooks.list(HookPoint.BEFORE_LLM)
-        # 2 个 Transform：_tools_schema_refresh + test_tf
-        assert len(handlers) == 2
+        # 1 个 Transform：test_tf（_tools_schema_refresh 由 Builder 注册）
+        assert len(handlers) == 1
         assert handlers[0].primitive == PrimitiveType.TRANSFORM
-        assert handlers[1].primitive == PrimitiveType.TRANSFORM
-        names = {h.name for h in handlers}
-        assert "test_tf" in names
-        assert "_tools_schema_refresh" in names
+        assert "test_tf" in {h.name for h in handlers}
 
     async def test_intercept(self) -> None:
         runtime = AgentRuntime(system_prompt="助手")
@@ -123,8 +120,8 @@ class TestAgentRuntimeDecorator:
             return data
 
         handlers = runtime._hooks.list(HookPoint.BEFORE_LLM)
-        # 2 个 Transform：_tools_schema_refresh + my_transform
-        assert len(handlers) == 2
+        # 1 个 Transform：my_transform（_tools_schema_refresh 由 Builder 注册）
+        assert len(handlers) == 1
         assert all(h.primitive == PrimitiveType.TRANSFORM for h in handlers)
 
 
@@ -382,7 +379,9 @@ class TestAgentRuntimeBuildContext:
         assert ctx.session_id == "test_session"
         assert ctx.agent_id == "test_agent"
         assert ctx.step_index == 5
-        assert ctx.services == {"_runtime": runtime}
+        # services 包含 controller，不再包含 _runtime
+        assert "_controller" in ctx.services
+        assert "_runtime" not in ctx.services
 
         # 验证回调函数可用
         ctx.set_plan({"steps": ["llm"]})

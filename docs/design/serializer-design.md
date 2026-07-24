@@ -558,59 +558,28 @@ store = GenericMemoryStore(SQLiteBackend("memory.db"))
 await store.initialize()
 memory_svc = MemoryService(store=store)
 
+from src.context import ContextConfig
+from src.context._manager import ContextManager
+
 context_manager = ContextManager(
     memory=memory_svc,
     serializer=MySerializer(),  # ← 注入自定义 serializer
 )
 
-runtime = AgentRuntime(
-    llm_executor=my_executor,
-    memory=memory_svc,
-    context_manager=context_manager,  # ← 传入绑定了自定义 serializer 的 manager
-)
-```
-
-#### 方式 B：通过 AgentRuntime 快捷参数
-
-```python
-# runtime.py 新增快捷参数
-
-class AgentRuntime:
-    def __init__(
-        self,
-        ...,
-        context_manager: ContextManager | None = None,
-        serializer: MessageSerializer | None = None,  # ← 快捷入口
-    ):
-        ...
-        if context_manager is not None:
-            self._context_manager = context_manager
-        elif serializer is not None:
-            # 用自定义 serializer 构造默认 ContextManager
-            self._context_manager = ContextManager(
-                memory=self._memory,
-                serializer=serializer,
-                config=ContextConfig(max_context_tokens=...),
-            )
-        else:
-            # 完全默认
-            self._context_manager = ContextManager(
-                memory=self._memory,
-                config=ContextConfig(max_context_tokens=...),
-            )
+# 通过 Builder 接线——AgentRuntime 本身不接收 context_manager 参数
+runtime = (AgentRuntime.builder()
+    .system_prompt("你是助手")
+    .llm(executor=my_executor)
+    .memory(memory_svc)
+    .context(config=ContextConfig(max_context_tokens=4096))
+    .build())
+# build() 内部使用 ContextManager(memory=memory_svc, serializer=MySerializer())
 ```
 
 ### 6.2 ContextService 暴露
 
-将 ContextManager 注入 `ctx.services`，使其他 Hook 可以读取序列化结果：
-
-```python
-# runtime.py
-self._ctx.set_services({
-    "memory": self._memory,
-    "context_manager": self._context_manager,
-})
-```
+`ContextManager` 由 Builder 在 `build()` 中创建并注入 `services["context_manager"]`，
+使其他 Hook 可以读取序列化结果：
 
 ---
 

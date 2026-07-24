@@ -36,6 +36,7 @@ class ReActLoop(LoopStrategy):
         self,
         hooks: Any,
         step_runner: Any,
+        controller: Any,
         router: Any | None = None,
         max_iterations: int = 10,
     ) -> None:
@@ -45,10 +46,11 @@ class ReActLoop(LoopStrategy):
         Args:
             hooks: HookRegistry 实例。
             step_runner: StepRunner 实例。
+            controller: RuntimeController 实例。
             router: 可选的路由函数，每次 LLM 结束后调用决定是否继续。
             max_iterations: 最大执行步数，默认 10。
         """
-        super().__init__(hooks, step_runner, router)
+        super().__init__(hooks, step_runner, controller, router)
         self._max_iterations = max_iterations
 
     async def run(self, ctx: RuntimeContext) -> None:
@@ -65,16 +67,16 @@ class ReActLoop(LoopStrategy):
         Args:
             ctx: RuntimeContext 实例。
         """
-        runtime = self._get_runtime(ctx)
+        ctl = self._controller
 
         for iteration in range(self._max_iterations):
             # 检查 Runtime 状态
-            if runtime.status != "running":
+            if ctl.status != "running":
                 break
 
             # 步前 hook：Interceptor → Transformer → Observer
             if await self._run_before_step_hooks(ctx):
-                runtime.status = "error"
+                ctl.status = "error"
                 break  # 被 Interceptor 阻断
 
             # Router：决定步骤类型（默认走 LLM）
@@ -83,20 +85,20 @@ class ReActLoop(LoopStrategy):
                 break
 
             # 更新 step 计数
-            runtime._step_index += 1
-            runtime._timeout["step_start_at"] = int(time.time() * 1000)
-            ctx = runtime._build_context()
+            ctl.step_index += 1
+            ctl.timeout["step_start_at"] = int(time.time() * 1000)
+            ctx = ctl.build_context()
 
-            # 执行单步（委托给 StepRunner）
-            step_result: StepResult = await self._step_runner.run_step(ctx, runtime)
+            # 执行单步（委托给 StepRunner，传入 controller）
+            step_result: StepResult = await self._step_runner.run_step(ctx, ctl)
 
             # 步后 hook：Transformer → Observer
             await self._run_after_step_hooks(ctx)
-            runtime._budget.step_count += 1
+            ctl.budget.step_count += 1
 
             # 记录 step history
-            runtime._step_history.append({
-                "step_index": runtime._step_index,
+            ctl.step_history.append({
+                "step_index": ctl.step_index,
                 "step_id": f"react_{iteration}",
                 "timestamp": time.time(),
                 "finish_reason": step_result.finish_reason.value,
@@ -133,15 +135,15 @@ class ReActLoop(LoopStrategy):
         Yields:
             流式事件字典。
         """
-        runtime = self._get_runtime(ctx)
+        ctl = self._controller
 
         for iteration in range(self._max_iterations):
-            if runtime.status != "running":
+            if ctl.status != "running":
                 break
 
             # 流式场景也执行步前 hook
             if await self._run_before_step_hooks(ctx):
-                runtime.status = "error"
+                ctl.status = "error"
                 yield {"type": "error", "error": "before_step 拦截"}
                 break
 
@@ -149,8 +151,8 @@ class ReActLoop(LoopStrategy):
             if next_step_type == "end":
                 break
 
-            runtime._step_index += 1
-            ctx = runtime._build_context()
+            ctl.step_index += 1
+            ctx = ctl.build_context()
 
             # 流式 LLM 执行
             yield {"type": "llm_start", "step": iteration}
@@ -196,25 +198,6 @@ class ReActLoop(LoopStrategy):
         if self._router is not None:
             return await self._router(ctx)
         return "llm"
-
-    def _get_runtime(self, ctx: RuntimeContext) -> Any:
-        """
-        从 RuntimeContext 获取关联的 AgentRuntime 实例。
-
-        通过 ctx.services 中的 "_runtime" 引用获取。
-
-        Args:
-            ctx: RuntimeContext 实例。
-
-        Returns:
-            AgentRuntime 实例。
-        """
-        runtime = ctx.services.get("_runtime")
-        if runtime is None:
-            raise RuntimeError(
-                "ReActLoop 需要 Runtime 通过 ctx.services['_runtime'] 注入自身引用"
-            )
-        return runtime
 
     def _create_step_result(self, response: Any) -> StepResult:
         """将 LLM 响应封装为 StepResult。"""
