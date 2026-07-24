@@ -1,3 +1,30 @@
+### 2026-07-24
+
+#### 5. 实现 MCP + Skill 原语（完整集成与集成测试）
+
+- **时间：** 2026-07-24
+- **发起人：** user
+- **修改文件：**
+  - `src/tools/_mcp/_config.py` — MCPServerConfig（stdio/sse 连接配置）
+  - `src/tools/_mcp/_client.py` — MCPClient（JSON-RPC 协议客户端，stdio + SSE）
+  - `src/tools/_mcp/_adapter.py` — MCPToolAdapter（MCP tool → ToolSpec 适配器）
+  - `src/tools/_mcp/_manager.py` — MCPServerManager（Server 生命周期管理）
+  - `src/tools/_mcp/__init__.py` — 导出 MCP 类
+  - `src/tools/_skill/_models.py` — SkillConfig、SkillEntry 数据模型
+  - `src/tools/_skill/_manager.py` — SkillManager（扫描/关键词匹配/注入 before_llm hook）
+  - `src/tools/_skill/__init__.py` — 导出 Skill 类
+  - `src/tools/__init__.py` — 导出全部 MCP/Skill 类
+  - `src/tools/_dispatcher.py` — 集成 MCP 路由，all_tools() 合并 MCP 工具
+  - `src/runtime/_runtime.py` — 新增 mcp/skills 参数，Skill hook 注册
+  - `src/runtime/_builder.py` — 新增 .mcp()/.skills() 链式方法
+  - `tests/mcp_mock_server.py` — MCP Mock Server（真实子进程，支持 stdio 协议）
+  - `tests/test_tools_mcp_integration.py` — 6 个集成测试（真实子进程通信）
+  - `tests/test_tools_mcp.py` — MCP 单元测试（含 mock）
+  - `tests/test_tools_skill.py` — Skill 单元测试（含真实文件 I/O）
+- **修改内容：** 实现 MCP 和 Skill 原语。MCP 支持 stdio/sse 传输、initialize/list_tools/call_tool 完整协议。Skill 支持 SKILL.md 扫描、关键词匹配、auto_inject 无条件注入、before_llm hook 自动注入。集成到 ToolDispatcher（MCP 前缀路由）和 AgentRuntime（mcp/skills 参数 + Builder 链式 API）。编写了 6 个真实集成测试，通过启动 Python 子进程模拟 MCP Server 验证完整的 stdio 协议交互。
+- **复盘结果：** 448 测试全部通过（含 6 个真实子进程集成测试），ruff lint 零报错。MCP client 编码问题通过 utf-8-sig + latin-1 兜底策略解决。
+- **潜在风险：** 无。向后兼容：mcp/skills 参数可选。
+
 ### 2026-07-23
 
 #### 4. 实现 Tool 原语（ToolSpec + ToolRegistry + ToolDispatcher）

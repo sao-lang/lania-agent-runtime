@@ -36,7 +36,7 @@ from src.runtime.context._serializer import (
 from src.runtime.hooks._registry import HookRegistry
 from src.runtime.llm._models import FinishReason, LLMResponse, LLMUsage
 from src.runtime.loops import LoopStrategy, LoopStrategyFactory
-from src.tools import ToolDispatcher, ToolRegistry
+from src.tools import MCPServerManager, SkillManager, ToolDispatcher, ToolRegistry
 
 if TYPE_CHECKING:
     from src.runtime._builder import RuntimeBuilder
@@ -71,6 +71,8 @@ class AgentRuntime:
         services: dict[str, Any] | None = None,
         agent_id: str = "",
         tools: ToolRegistry | None = None,
+        mcp: MCPServerManager | None = None,
+        skills: SkillManager | None = None,
     ) -> None:
         """
         初始化 AgentRuntime。
@@ -91,6 +93,9 @@ class AgentRuntime:
             tools: ToolRegistry 实例。提供时自动创建 ToolDispatcher
                 并设为 tool_executor，同时注册 before_llm Transform
                 自动刷新 tools_schema。优先级高于 tool_executor。
+            mcp: MCPServerManager 实例。提供时自动集成到 ToolDispatcher。
+            skills: SkillManager 实例。提供时自动注册 before_llm
+                Transform 注入领域知识。
         """
         self.session_id: str = f"sess_{uuid.uuid4().hex[:12]}"
         self.agent_id: str = agent_id or f"agent_{uuid.uuid4().hex[:8]}"
@@ -125,21 +130,40 @@ class AgentRuntime:
             serializer=self._serializer,
         )
 
-        # Tool 原语集成：如果提供了 ToolRegistry，创建 ToolDispatcher
-        # 并自动设为 tool_executor，同时注册 before_llm Transform 刷新 schema
+        # Tool / MCP / Skill 原语集成
+        # 创建 ToolDispatcher（整合 ToolRegistry + MCPServerManager）
         self._tool_dispatcher: ToolDispatcher | None = None
-        if tools is not None:
-            self._tool_dispatcher = ToolDispatcher(tool_registry=tools)
-            # 将 ToolDispatcher.dispatch 设为 tool_executor
-            self._tool_executor = self._tool_dispatcher.dispatch
-            self._step_runner._tool_executor = self._tool_executor
-            # 注册 before_llm Transform 自动刷新 tools_schema
+        self._mcp_manager: MCPServerManager | None = mcp
+        self._skill_manager: SkillManager | None = skills
+
+        # 确定 ToolRegistry
+        tool_registry = tools if tools is not None else ToolRegistry()
+
+        # 创建 ToolDispatcher（传入 ToolRegistry 和可选的 MCPServerManager）
+        self._tool_dispatcher = ToolDispatcher(
+            tool_registry=tool_registry,
+            mcp_manager=mcp,
+        )
+        # 将 ToolDispatcher.dispatch 设为 tool_executor
+        self._tool_executor = self._tool_dispatcher.dispatch
+        self._step_runner._tool_executor = self._tool_executor
+        # 注册 before_llm Transform 自动刷新 tools_schema
+        self._hooks.register(
+            HookPoint.BEFORE_LLM,
+            self._inject_tools_schema,
+            primitive=PrimitiveType.TRANSFORM,
+            name="_tools_schema_refresh",
+            priority=100,
+        )
+
+        # Skill 原语集成：注册 before_llm Transform 注入领域知识
+        if skills is not None:
             self._hooks.register(
                 HookPoint.BEFORE_LLM,
-                self._inject_tools_schema,
+                skills.get_before_llm_hook(),
                 primitive=PrimitiveType.TRANSFORM,
-                name="_tools_schema_refresh",
-                priority=100,
+                name="_skill_inject",
+                priority=200,
             )
 
         # LoopStrategy —— 使用新接口或旧接口
@@ -414,15 +438,32 @@ class AgentRuntime:
         """
         获取当前关联的 ToolRegistry。
 
-        如果 Runtime 通过 tools 参数初始化，返回对应的 ToolRegistry；
-        否则返回 None。
-
         Returns:
             ToolRegistry 实例或 None。
         """
         if self._tool_dispatcher is not None:
             return self._tool_dispatcher._tools
         return None
+
+    @property
+    def mcp_manager(self) -> MCPServerManager | None:
+        """
+        获取当前关联的 MCPServerManager。
+
+        Returns:
+            MCPServerManager 实例或 None。
+        """
+        return self._mcp_manager
+
+    @property
+    def skill_manager(self) -> SkillManager | None:
+        """
+        获取当前关联的 SkillManager。
+
+        Returns:
+            SkillManager 实例或 None。
+        """
+        return self._skill_manager
 
     # ============ 流式执行 ============
 
@@ -867,7 +908,8 @@ class AgentRuntime:
         """
         before_llm Transform：自动将当前工具列表注入到 services。
 
-        每次 LLM 调用前执行，确保 tools_schema 始终与当前注册的工具保持一致。
+        每次 LLM 调用前执行，确保 tools_schema 始终与当前注册的工具保持一致
+        （包含 ToolRegistry 中的本地工具和 MCPServerManager 中的 MCP 工具）。
         通过 self._services 传递，RuntimeContext._build_context() 会将其拷贝到
         ctx.services，供 LLMExecutor._get_tools_schema() 消费。
 

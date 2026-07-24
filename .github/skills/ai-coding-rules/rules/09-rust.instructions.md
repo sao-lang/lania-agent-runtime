@@ -83,6 +83,7 @@ impl AuthService {
 - 使用 `assert_eq!` / `assert!` 断言，必要时用 `?` 操作符传播错误
 - 使用 `cargo test` 执行所有测试
 - 使用 `cargo test -- --nocapture` 查看测试中的 println! 输出
+- **真实环境验证**：涉及外部服务（数据库、API、缓存等）时，必须有专用的连接验证测试（禁止 Mock），确认服务可达后才能报告"测试通过"
 
 ## Lint
 

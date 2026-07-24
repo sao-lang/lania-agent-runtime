@@ -13,7 +13,7 @@ from src.runtime._types import ExecutorFn, RouterFn
 from src.runtime.config._runtime_config import RuntimeConfig
 from src.runtime.hooks._registry import HookRegistry
 from src.runtime.plugins._plugin import Plugin
-from src.tools import ToolRegistry
+from src.tools import MCPServerManager, SkillManager, ToolRegistry
 
 
 class RuntimeBuilder:
@@ -41,6 +41,8 @@ class RuntimeBuilder:
         self._agent_id: str = ""
         self._plugins: list[Plugin] = []
         self._tool_registry: ToolRegistry | None = None
+        self._mcp_manager: MCPServerManager | None = None
+        self._skill_manager: SkillManager | None = None
 
     def system_prompt(self, prompt: str) -> RuntimeBuilder:
         """
@@ -108,6 +110,32 @@ class RuntimeBuilder:
             self（链式调用）。
         """
         self._tool_registry = registry
+        return self
+
+    def mcp(self, manager: MCPServerManager) -> RuntimeBuilder:
+        """
+        设置 MCPServerManager，集成 MCP 工具。
+
+        Args:
+            manager: MCPServerManager 实例。
+
+        Returns:
+            self（链式调用）。
+        """
+        self._mcp_manager = manager
+        return self
+
+    def skills(self, manager: SkillManager) -> RuntimeBuilder:
+        """
+        设置 SkillManager，注入领域知识。
+
+        Args:
+            manager: SkillManager 实例。
+
+        Returns:
+            self（链式调用）。
+        """
+        self._skill_manager = manager
         return self
 
     def memory(self, backend: str = "sqlite", **kwargs: Any) -> RuntimeBuilder:
@@ -250,6 +278,8 @@ class RuntimeBuilder:
             services=self._services or None,
             agent_id=self._agent_id,
             tools=self._tool_registry,
+            mcp=self._mcp_manager,
+            skills=self._skill_manager,
         )
 
         # 插件在 build() 时不自动注册（需要 async 上下文），

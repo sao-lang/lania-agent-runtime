@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 from src.runtime.loops._types import StepResult
 
 if TYPE_CHECKING:
-    from src.runtime.context._context import RuntimeContext
     from src.runtime._steps._step_runner import StepRunner
+    from src.runtime.context._context import RuntimeContext
     from src.runtime.hooks._registry import HookRegistry
 
 

@@ -60,7 +60,8 @@ export class AuthService {
 - 使用 vitest + @testing-library/react 编写测试
 - 覆盖 Happy Path、Boundary Case、Exception Handling 三个维度
 - 测试文件命名 `*.test.ts` 或 `*.test.tsx`
-- Mock 外部依赖而非真实调用
+- 单元测试：Mock 外部依赖而非真实调用
+- **真实环境验证**：涉及外部服务（数据库、API、缓存等）时，必须有专用的连接验证测试（禁止 Mock），确认服务可达后才能报告"测试通过"
 
 ## Lint
 

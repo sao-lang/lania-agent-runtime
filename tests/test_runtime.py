@@ -67,8 +67,13 @@ class TestAgentRuntimeRegister:
         assert handler_id is not None
 
         handlers = runtime._hooks.list(HookPoint.BEFORE_LLM)
-        assert len(handlers) == 1
+        # 2 个 Transform：_tools_schema_refresh + test_tf
+        assert len(handlers) == 2
         assert handlers[0].primitive == PrimitiveType.TRANSFORM
+        assert handlers[1].primitive == PrimitiveType.TRANSFORM
+        names = {h.name for h in handlers}
+        assert "test_tf" in names
+        assert "_tools_schema_refresh" in names
 
     async def test_intercept(self) -> None:
         runtime = AgentRuntime(system_prompt="助手")
@@ -118,8 +123,9 @@ class TestAgentRuntimeDecorator:
             return data
 
         handlers = runtime._hooks.list(HookPoint.BEFORE_LLM)
-        assert len(handlers) == 1
-        assert handlers[0].primitive == PrimitiveType.TRANSFORM
+        # 2 个 Transform：_tools_schema_refresh + my_transform
+        assert len(handlers) == 2
+        assert all(h.primitive == PrimitiveType.TRANSFORM for h in handlers)
 
 
 class TestAgentRuntimeEngine:

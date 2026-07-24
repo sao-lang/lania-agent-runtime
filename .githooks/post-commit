@@ -1,0 +1,3 @@
+#!/bin/sh
+# post-commit hook: 提交完成后恢复 junction，恢复实时同步
+pwsh -NoProfile -ExecutionPolicy Bypass -File sync-skills.ps1 -ToJunction

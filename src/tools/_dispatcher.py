@@ -1,8 +1,9 @@
 """
 ToolDispatcher——三种原语的统一调度入口。
 
-当前版本仅实现了 Tool 原语的路由（路由到 ToolRegistry），
-MCP 前缀路由（mcp_）留作占位，将在后续迭代中实现。
+按 name 前缀路由到不同后端：
+  - "mcp_{server}_{tool}" → MCPServerManager
+  - 其他 → ToolRegistry
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from src.tools._mcp._manager import MCPServerManager
 from src.tools._registry import ToolRegistry
 from src.tools._spec import ToolSpec
 
@@ -21,15 +23,12 @@ class ToolDispatcher:
     """
     三种原语的统一调度入口。
 
-    LLM 调用 tool 时，按 name 前缀路由到不同后端。
-    当前仅实现本地 ToolRegistry 路由，MCP 路由为占位。
-
-    路由规则:
-      - "mcp_{server}_{tool}" → MCP（待实现）
+    LLM 调用 tool 时，按 name 前缀路由到不同后端：
+      - "mcp_{server}_{tool}" → MCPServerManager
       - 其他 → ToolRegistry
 
     Usage:
-        >>> dispatcher = ToolDispatcher(tool_registry=registry)
+        >>> dispatcher = ToolDispatcher(tool_registry=registry, mcp_manager=mcp)
         >>> all_tools = dispatcher.all_tools()
         >>> result = await dispatcher.dispatch(ctx)
     """
@@ -37,26 +36,35 @@ class ToolDispatcher:
     def __init__(
         self,
         tool_registry: ToolRegistry,
+        mcp_manager: MCPServerManager | None = None,
     ) -> None:
         """
         初始化统一调度器。
 
         Args:
             tool_registry: ToolRegistry 实例。
+            mcp_manager: 可选的 MCPServerManager 实例。
         """
         self._tools: ToolRegistry = tool_registry
+        self._mcp: MCPServerManager = mcp_manager or MCPServerManager()
+
+    @property
+    def mcp_manager(self) -> MCPServerManager:
+        """获取 MCP Server 管理器。"""
+        return self._mcp
 
     def all_tools(self) -> list[ToolSpec]:
         """
         合并所有来源的工具描述列表。
 
-        当前仅返回 ToolRegistry 中的工具。
-        后续迭代将合并 MCP 工具。
+        合并 ToolRegistry 中的本地工具和 MCPServerManager 中的 MCP 工具。
 
         Returns:
-            ToolSpec 列表。
+            所有可用工具的 ToolSpec 列表。
         """
-        return self._tools.list_specs()
+        local_tools = self._tools.list_specs()
+        mcp_tools = self._mcp.get_all_tools()
+        return local_tools + mcp_tools
 
     async def dispatch(self, ctx: "RuntimeContext") -> Any:
         """
@@ -67,7 +75,7 @@ class ToolDispatcher:
 
         从 ctx 的最近一条 assistant 消息中提取 tool_calls，
         解析 OpenAI 标准格式（function.name + function.arguments JSON），
-        执行工具并返回工具结果消息。
+        按 name 前缀路由到对应后端执行。
 
         Args:
             ctx: RuntimeContext 实例。
@@ -97,9 +105,12 @@ class ToolDispatcher:
 
         # 路由：按 name 前缀分发
         if name.startswith("mcp_"):
-            # TODO: 后续迭代实现 MCP 路由
-            # result = await self._dispatch_mcp(name, args)
-            result = {"error": f"MCP 工具 '{name}' 暂未实现"}
+            try:
+                result = await self._mcp.execute(name, **args)
+            except KeyError as e:
+                result = f"MCP 工具 '{name}' 未找到: {e}"
+            except Exception as e:
+                result = f"MCP 工具 '{name}' 执行错误: {e}"
         else:
             result = await self._tools.execute(name, **args)
 

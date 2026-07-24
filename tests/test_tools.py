@@ -290,8 +290,8 @@ class TestToolDispatcher:
         result = await dispatcher.dispatch(ctx)
         assert result is None
 
-    async def test_dispatch_mcp_placeholder(self) -> None:
-        """MCP 前缀路由返回占位错误（真实 OpenAI 格式）。"""
+    async def test_dispatch_mcp_not_found(self) -> None:
+        """MCP 前缀路由：工具未连接时返回友好错误。"""
         registry = ToolRegistry()
         dispatcher = ToolDispatcher(tool_registry=registry)
         from src.runtime.context._context import RuntimeContext
@@ -317,7 +317,7 @@ class TestToolDispatcher:
         )
         result = await dispatcher.dispatch(ctx)
         assert result is not None
-        assert "暂未实现" in result["content"]
+        assert "未找到" in result["content"] or "错误" in result["content"]
 
 
 class TestToolRuntimeIntegration:
@@ -368,13 +368,13 @@ class TestToolRuntimeIntegration:
         assert schema[0]["function"]["name"] in ("calculator", "greet")
 
     async def test_runtime_without_tools(self) -> None:
-        """不传入 tools 时，不创建 ToolDispatcher。"""
+        """不传入 tools 时，ToolDispatcher 仍被创建（空注册表）。"""
         runtime = AgentRuntime(system_prompt="你是一个助手")
-        assert runtime._tool_dispatcher is None
-        assert runtime.tool_registry is None
-        # 不应有 tools_schema Transform
+        assert runtime._tool_dispatcher is not None
+        assert runtime.tool_registry is not None
+        # 仍有 tools_schema Transform（刷新空的工具列表）
         handlers = runtime._hooks.list(HookPoint.BEFORE_LLM)
-        assert not any(h.name == "_tools_schema_refresh" for h in handlers)
+        assert any(h.name == "_tools_schema_refresh" for h in handlers)
 
     async def test_runtime_tool_executor_fallback(self) -> None:
         """同时提供 tools 和 tool_executor 时，tools 优先。"""

@@ -1,0 +1,13 @@
+#!/bin/sh
+# post-checkout hook: 切换分支后检测并恢复 junction（如果被真实文件覆盖了）
+pwsh -NoProfile -ExecutionPolicy Bypass -Command "
+    \$j = '.github\skills\ai-coding-rules';
+    if (Test-Path \$j) {
+        \$info = Get-Item \$j -Force;
+        \$isJunction = \$info.Attributes -band [System.IO.FileAttributes]::ReparsePoint;
+        if (-not \$isJunction) {
+            Write-Host '🔁 [post-checkout] 恢复 junction ...' -ForegroundColor Cyan;
+            & 'sync-skills.ps1' -ToJunction;
+        }
+    }
+"

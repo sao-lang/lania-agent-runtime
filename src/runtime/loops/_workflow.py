@@ -21,8 +21,8 @@ from src.runtime.loops._base import LoopStrategy
 from src.runtime.loops._types import StepResult, StepStatus
 
 if TYPE_CHECKING:
-    from src.runtime.context._context import RuntimeContext
     from src.runtime._steps._step_runner import StepRunner
+    from src.runtime.context._context import RuntimeContext
 
 
 class NodeType(Enum):

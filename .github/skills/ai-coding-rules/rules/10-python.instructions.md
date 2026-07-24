@@ -92,6 +92,7 @@ class AuthService:
 - 使用 `parametrize` 减少重复测试代码
 - 运行 `pytest` 或 `pytest tests/` 执行测试
 - 运行 `pytest --cov` 检查测试覆盖率
+- **真实环境验证**：涉及外部服务（PostgreSQL、Neo4j、Redis、MinIO、外部 API 等）时，必须有专用的连接验证测试（禁止 Mock），直连真实服务并执行至少一条简单操作，确认服务可达后才能报告"测试通过"
 
 ## Lint
 

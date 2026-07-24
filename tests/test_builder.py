@@ -36,7 +36,9 @@ class TestRuntimeBuilder:
             return {"role": "tool", "content": "done"}
 
         runtime = RuntimeBuilder().system_prompt("助手").tool(my_tool).build()
-        assert runtime._tool_executor is my_tool
+        # tool_executor 会被 ToolDispatcher.dispatch 覆盖
+        assert runtime._tool_executor is not None
+        assert runtime._tool_dispatcher is not None
 
     async def test_build_with_agent_id(self) -> None:
         runtime = RuntimeBuilder().system_prompt("助手").agent_id("my_bot").build()

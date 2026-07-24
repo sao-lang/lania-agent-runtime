@@ -1,0 +1,4 @@
+#!/bin/sh
+# pre-commit hook: 提交前将 junction 切换为真实文件，让 Git 感知变化
+pwsh -NoProfile -ExecutionPolicy Bypass -File sync-skills.ps1 -ToReal && \
+git add .github/skills/ai-coding-rules/ .github/skills/debug-tools/
