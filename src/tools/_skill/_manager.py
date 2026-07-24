@@ -210,7 +210,10 @@ class SkillManager:
                 auto_inject=skill_data.get("auto_inject", False),
             )
         except Exception as e:
-            logger.warning("加载 skill.toml 失败 (%s): %s", toml_path, e)
+            logger.warning(
+                "加载 skill.toml 失败 (%s): %s", toml_path, e,
+                exc_info=True,
+            )
             return SkillConfig(name=default_name)
 
     @staticmethod

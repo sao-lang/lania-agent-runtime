@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.runtime._types import BudgetSnapshot, PauseAction
+from src.runtime._types import PauseAction
 from src.runtime.context._context import RuntimeContext
 from src.runtime.context._payload import ContextPayload
 from src.runtime.context._serializer import MessageSerializer

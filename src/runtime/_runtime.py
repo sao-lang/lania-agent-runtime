@@ -7,9 +7,10 @@ AgentRuntime 核心类。
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, cast
 
 from src.runtime._steps import StepRunner
 from src.runtime._types import (
@@ -36,6 +37,8 @@ from src.runtime.context._serializer import (
 from src.runtime.hooks._registry import HookRegistry
 from src.runtime.llm._models import FinishReason, LLMResponse, LLMUsage
 from src.runtime.loops import LoopStrategy, LoopStrategyFactory
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from src.runtime._builder import RuntimeBuilder
@@ -134,7 +137,7 @@ class AgentRuntime:
             self._loop = loop_strategy
         elif self._loop_executor is not None:
             # 旧接口：保留 loop_executor 行为
-            self._loop = None  # type: ignore[assignment]
+            self._loop: LoopStrategy | None = None
         else:
             # 通过工厂创建（传入 controller 替代 services["_runtime"] 后门）
             self._register_default_strategies()
@@ -354,7 +357,13 @@ class AgentRuntime:
             )
 
     async def cancel(self) -> None:
-        """取消当前执行。"""
+        """
+        取消当前执行。
+
+        设置取消标志，正在执行的 LLM 调用会在下一次循环迭代
+        检查 _cancelled 标志时中断。如需强制中断正在执行的协程，
+        请直接取消对应的 asyncio.Task。
+        """
         self._cancelled = True
         self.status = "cancelled"
 
@@ -471,7 +480,7 @@ class AgentRuntime:
                 if next_step == "llm" and hasattr(self._llm_executor, "execute_stream"):
                     # 流式 LLM 执行
                     executor = self._llm_executor
-                    collector, response = await executor.execute_stream(ctx)  # type: ignore[union-attr]
+                    collector, response = await cast(Any, executor).execute_stream(ctx)
                     # 逐 chunk 产出 text 事件
                     if collector.full_content:
                         yield StreamEvent(type="text", content=collector.full_content)
@@ -888,14 +897,13 @@ class AgentRuntime:
         elif step_id == "tool" and self._tool_executor is not None:
             await self._execute_tool_step(ctx)
         else:
-            # 通用 executor lookup
-            executor_map: dict[str, ExecutorFn | None] = {
-                "llm": self._llm_executor,
-                "tool": self._tool_executor,
-            }
-            executor = executor_map.get(step_id)
-            if executor is not None:
-                await executor(ctx)
+            # plan 自定义 step_id（非 "llm"/"tool"）：默认走 LLM 步骤
+            logger.info(
+                "_execute_step: plan step_id '%s' 映射为 llm 步骤",
+                step_id,
+            )
+            if self._llm_executor is not None:
+                await self._execute_llm_step(ctx)
 
     async def _execute_llm_step(self, ctx: RuntimeContext) -> None:
         """
@@ -912,11 +920,9 @@ class AgentRuntime:
         await self._hooks.run_transformers(HookPoint.BEFORE_LLM, self._context_payload, ctx)
 
         # 检查 ContextAssemblerHook 是否已组装好 messages
-        assembled = ctx.services.get("_assembled_messages")
-        if assembled is not None:
-            self._messages = list(assembled)
-            # 清理标记，避免后续重复使用
-            del ctx.services["_assembled_messages"]
+        if self._context_payload.assembled_messages is not None:
+            self._messages = list(self._context_payload.assembled_messages)
+            self._context_payload.assembled_messages = None  # 消费后重置
         else:
             # before_serialize transformers（仅在 dirty 时执行）
             if self._context_payload.is_dirty:
@@ -954,10 +960,10 @@ class AgentRuntime:
 
         # 检测是否为 LLMExecutor 新接口（有 .execute 方法）
         if hasattr(executor, "execute"):
-            llm_response: LLMResponse = await executor.execute(ctx)  # type: ignore[union-attr]
+            llm_response: LLMResponse = await cast(Any, executor).execute(ctx)
         else:
             # 旧接口：ExecutorFn 直接调用
-            raw = await executor(ctx)  # type: ignore[misc]
+            raw = await cast(Any, executor)(ctx)
             llm_response = self._legacy_to_llm_response(raw)
 
         # 追加 LLM 回复到消息列表
@@ -965,6 +971,9 @@ class AgentRuntime:
 
         # 保存最后响应供 Transform / Interceptor / Router 使用
         self._last_llm_response = llm_response
+
+        # 重建 ctx，使 after_llm hooks 能看到最新 messages
+        ctx = self._build_context()
 
         # after_llm transformers（预算记账等，Transform 管线统一处理）
         after_data = await self._hooks.run_transformers(HookPoint.AFTER_LLM, llm_response, ctx)
@@ -1067,18 +1076,22 @@ class AgentRuntime:
 
     async def _default_loop(self, user_input: str) -> None:
         """
-        默认 step loop（ReAct 风格）。
+        默认 step loop（ReAct 风格，向后兼容兜底）。
 
-        修改 messages 和状态，不返回值。
-        run() 之后通过 _make_result() 构造 RunResult。
+        当未配置 LoopStrategy 且未配置 loop_executor 时使用。
+        正常 Builder 流程中不可达（Builder 始终设置 LoopStrategy），
+        保留仅作为手动构造 AgentRuntime 时的向后兼容路径。
 
         Args:
             user_input: 用户输入（仅用于 loop 计数）。
         """
+        logger.warning(
+            "_default_loop 被调用——未配置 LoopStrategy，使用向后兼容的兜底路径"
+        )
         max_steps = self._budget.step_limit or 10
 
         for _ in range(max_steps):
-            if self.status != "running":
+            if self.status != "running" or self._cancelled:
                 break
 
             ctx = self._build_context()

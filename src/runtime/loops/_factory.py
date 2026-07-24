@@ -12,6 +12,10 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from src.runtime.loops._base import LoopStrategy
 
+# 模块级注册表（替代类级可变状态，避免所有 Runtime 实例共享同一字典
+# 带来的并发安全隐患）
+_registry: dict[str, type[LoopStrategy]] = {}
+
 
 class LoopStrategyFactory:
     """
@@ -25,36 +29,23 @@ class LoopStrategyFactory:
         strategy = LoopStrategyFactory.create("react", hooks=hooks, step_runner=runner)
     """
 
-    _registry: dict[str, type[LoopStrategy]] = {}
+    # 指向模块级 _registry——所有实例/测试共享同一注册表
+    _registry: dict[str, type[LoopStrategy]] = _registry
 
     @classmethod
     def register(cls, name: str, strategy_cls: type[LoopStrategy]) -> None:
-        """
-        注册一个策略类到工厂。
-
-        Args:
-            name: 策略名称（如 "react", "plan_and_execute", "workflow"）。
-            strategy_cls: 策略类（必须是 LoopStrategy 子类）。
-
-        Raises:
-            ValueError: 如果名称已注册。
-        """
+        """注册一个策略类到工厂。"""
         if name in cls._registry:
             raise ValueError(f"策略 '{name}' 已注册")
         cls._registry[name] = strategy_cls
 
     @classmethod
     def create(cls, name: str, **kwargs: Any) -> LoopStrategy:
-        """
-        通过工厂创建策略实例。
+        """通过工厂创建策略实例。
 
         Args:
             name: 策略名称。
             **kwargs: 传递给策略构造函数的参数。
-                - react: hooks, step_runner, router=None
-                - plan_and_execute: hooks, step_runner, router=None,
-                  planner_prompt="", max_replans=3
-                - workflow: hooks, step_runner, workflow_definition
 
         Returns:
             LoopStrategy 实例。
@@ -68,25 +59,12 @@ class LoopStrategyFactory:
 
     @classmethod
     def available(cls) -> list[str]:
-        """
-        获取所有已注册的策略名称列表。
-
-        Returns:
-            策略名称列表。
-        """
+        """获取所有已注册的策略名称列表。"""
         return list(cls._registry.keys())
 
     @classmethod
     def unregister(cls, name: str) -> None:
-        """
-        注销一个策略。
-
-        Args:
-            name: 要注销的策略名称。
-
-        Raises:
-            ValueError: 如果策略名称未注册。
-        """
+        """注销一个策略。"""
         if name not in cls._registry:
             raise ValueError(f"未知的策略: '{name}'")
         del cls._registry[name]

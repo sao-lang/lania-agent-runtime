@@ -20,6 +20,7 @@ from src.runtime._types import (
     PauseAction,
     PrimitiveType,
 )
+from src.runtime.llm._models import FinishReason, LLMResponse, LLMUsage, ToolCall
 from src.runtime.loops import (
     AgentNode,
     ConditionNode,
@@ -33,8 +34,6 @@ from src.runtime.loops import (
     WorkflowLoop,
 )
 from src.runtime.loops._types import PlanStep as PlanStepType
-from src.runtime.llm._models import FinishReason, LLMResponse, LLMUsage, ToolCall
-
 
 # ============ 辅助函数 ============
 

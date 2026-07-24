@@ -79,8 +79,20 @@ class RuntimeConfig:
         Returns:
             RuntimeConfig 实例。
         """
+        # 类型校验：确保 dict 字段收到的是 dict
+        _expect_dict = [
+            "llm", "loop", "memory", "services",
+            "plugins", "hooks", "timeout", "budget",
+        ]
+        for field_name in _expect_dict:
+            val = data.get(field_name)
+            if val is not None and not isinstance(val, dict):
+                raise TypeError(
+                    f"配置字段 '{field_name}' 应为 dict，收到 {type(val).__name__}: {val}"
+                )
+
         return cls(
-            system_prompt=data.get("system_prompt", ""),
+            system_prompt=str(data.get("system_prompt", "")),
             llm=data.get("llm", {}),
             loop=data.get("loop", {}),
             memory=data.get("memory", {}),
@@ -142,13 +154,23 @@ class RuntimeConfig:
                 continue
             rest = key[len(prefix) :].lower()
 
-            # 优先尝试双下划线分隔 section__key
+            # 双下划线分隔 section__sub_key 或多级嵌套 section__key1__key2
             if "__" in rest:
-                section, sub_key = rest.split("__", 1)
+                parts = rest.split("__")
+                section = parts[0]
                 if section not in data:
                     data[section] = {}
-                if isinstance(data[section], dict):
-                    data[section][sub_key] = _parse_env_value(value)
+                # 支持多级嵌套，如 AGENT_SERVICES__WEATHER__API_KEY
+                target = data[section]
+                if isinstance(target, dict):
+                    for sub_key in parts[1:-1]:
+                        if sub_key not in target:
+                            target[sub_key] = {}
+                        target = target[sub_key]
+                        if not isinstance(target, dict):
+                            break
+                    if isinstance(target, dict):
+                        target[parts[-1]] = _parse_env_value(value)
             else:
                 # 单下划线：判断是否为已知 section
                 parts = rest.split("_", 1)
@@ -184,12 +206,19 @@ class RuntimeConfig:
             raise FileNotFoundError(f"配置文件不存在: {path}")
 
         try:
-            import yaml
+            import yaml  # type: ignore[import-untyped]
         except ImportError:
-            raise ImportError("加载 YAML 配置需要安装 PyYAML: pip install pyyaml")
+            raise ImportError(
+                "加载 YAML 配置需要安装 PyYAML: pip install pyyaml"
+            ) from None
 
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:
             data = yaml.safe_load(f)
+
+        if data is not None and not isinstance(data, dict):
+            raise ValueError(
+                f"YAML 配置顶层必须为字典，收到 {type(data).__name__}: {data}"
+            )
 
         return cls.from_dict(data or {})
 
@@ -247,7 +276,7 @@ class RuntimeConfig:
 
 def _parse_env_value(value: str) -> Any:
     """解析环境变量值（尝试转换为数字或布尔值）。"""
-    # 布尔值
+    # 布尔值（"0"/"1" 也按布尔处理，常见于配置开关）
     if value.lower() in ("true", "yes", "1"):
         return True
     if value.lower() in ("false", "no", "0"):

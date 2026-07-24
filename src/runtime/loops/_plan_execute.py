@@ -16,6 +16,7 @@ import json
 import time
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
+from src.runtime.llm._models import FinishReason
 from src.runtime.loops._base import LoopStrategy
 from src.runtime.loops._types import Plan, PlanStep, StepResult, StepStatus
 
@@ -124,7 +125,9 @@ class PlanExecuteLoop(LoopStrategy):
             if next_step_type == "end":
                 break
 
-            # 注入 step description 到 context
+            # 注入 step description 到 context（每次执行前清理，防止跨循环累积）
+            if total_steps == 0 and step_index == 0:
+                ctl.context_payload.injected_context.clear()
             ctl.context_payload.injected_context.append(step.description)
             ctx = ctl.build_context()
 
@@ -213,6 +216,8 @@ class PlanExecuteLoop(LoopStrategy):
 
             yield {"type": "step_start", "step_id": plan.steps[step_index].id}
 
+            if total_steps == 1 and step_index == 0:
+                ctl.context_payload.injected_context.clear()
             ctl.context_payload.injected_context.append(plan.steps[step_index].description)
             ctl.step_index += 1
             ctx = ctl.build_context()
@@ -329,17 +334,17 @@ class PlanExecuteLoop(LoopStrategy):
         if not content:
             return None
 
-        # 尝试提取 JSON（支持 ```json ... ``` 格式）
-        json_match = re.search(r"```(?:json)?\s*\n?({.*?})\s*\n?```", content, re.DOTALL)
-        json_str = json_match.group(1) if json_match else content.strip()
+        # 策略 1：提取 ```json ... ``` 代码块
+        json_block_match = re.search(
+            r"```(?:json)?\s*\n?([\s\S]*?)```", content, re.DOTALL
+        )
+        json_str = json_block_match.group(1).strip() if json_block_match else content.strip()
 
-        # 找到第一个 { 和最后一个 }
+        # 策略 2：提取最外层 { 和 } 之间的内容
         start = json_str.find("{")
         end = json_str.rfind("}")
-        if start == -1 or end == -1:
-            return None
-
-        json_str = json_str[start : end + 1]
+        if start != -1 and end != -1:
+            json_str = json_str[start : end + 1]
 
         try:
             data = json.loads(json_str)
@@ -459,9 +464,7 @@ class PlanExecuteLoop(LoopStrategy):
                 tool_calls=list(response.tool_calls),
             )
         return StepResult(
-            finish_reason=__import__(
-                "src.runtime.llm._models", fromlist=["FinishReason"]
-            ).FinishReason.STOP,
+            finish_reason=FinishReason.STOP,
             status=StepStatus.SUCCESS,
             content=str(response),
         )

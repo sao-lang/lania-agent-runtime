@@ -20,35 +20,36 @@ class TestStepRunnerBranches:
     """StepRunner 分支覆盖。"""
 
     async def test_llm_response_dict_path(self) -> None:
-        """LLM 返回 dict 的路径。"""
+        """LLM 返回 dict 的路径（通过 run_llm_only）。"""
         hooks = HookRegistry()
-        messages: list = []
         runtime = AgentRuntime(system_prompt="助手")
 
         async def mock_llm(ctx):
             return {"role": "assistant", "content": "dict response"}
 
         runner = StepRunner(hooks=hooks, llm_executor=mock_llm)
-        await runner.run_llm_step(runtime._context_payload, messages, runtime._budget, RuntimeController(runtime))
-        assert any(m.get("content") == "dict response" for m in messages)
+        ctl = RuntimeController(runtime)
+        ctx = ctl.build_context()
+        await runner.run_llm_only(ctx, ctl)
+        assert any(m.get("content") == "dict response" for m in ctl.messages)
 
     async def test_llm_response_str_path(self) -> None:
-        """LLM 返回字符串的路径。"""
+        """LLM 返回字符串的路径（通过 run_llm_only）。"""
         hooks = HookRegistry()
-        messages: list = []
         runtime = AgentRuntime(system_prompt="助手")
 
         async def mock_llm(ctx):
             return "string response"
 
         runner = StepRunner(hooks=hooks, llm_executor=mock_llm)
-        await runner.run_llm_step(runtime._context_payload, messages, runtime._budget, RuntimeController(runtime))
-        assert any(m.get("content") == "string response" for m in messages)
+        ctl = RuntimeController(runtime)
+        ctx = ctl.build_context()
+        await runner.run_llm_only(ctx, ctl)
+        assert any(m.get("content") == "string response" for m in ctl.messages)
 
     async def test_after_llm_block_action(self) -> None:
-        """after_llm BlockAction 路径。"""
+        """after_llm BlockAction 路径（通过 run_llm_only）。"""
         hooks = HookRegistry()
-        messages: list = []
         runtime = AgentRuntime(system_prompt="助手")
 
         async def block_after(data, ctx):
@@ -64,15 +65,15 @@ class TestStepRunnerBranches:
             return {"role": "assistant", "content": "bad content"}
 
         runner = StepRunner(hooks=hooks, llm_executor=mock_llm)
-        result = await runner.run_llm_step(
-            runtime._context_payload, messages, runtime._budget, RuntimeController(runtime)
-        )
-        assert result == "after_llm 拦截"
+        ctl = RuntimeController(runtime)
+        ctx = ctl.build_context()
+        result = await runner.run_llm_only(ctx, ctl)
+        assert result is None  # run_llm_only 被阻断时返回 None
+        assert runtime.status == "error"
 
     async def test_after_llm_allow_modified_dict(self) -> None:
-        """after_llm AllowAction modified dict 路径。"""
+        """after_llm AllowAction modified dict 路径（通过 run_step）。"""
         hooks = HookRegistry()
-        messages: list = []
         runtime = AgentRuntime(system_prompt="助手")
 
         async def modify_after(data, ctx):
@@ -88,14 +89,15 @@ class TestStepRunnerBranches:
             return {"role": "assistant", "content": "original"}
 
         runner = StepRunner(hooks=hooks, llm_executor=mock_llm)
-        await runner.run_llm_step(runtime._context_payload, messages, runtime._budget, RuntimeController(runtime))
+        ctl = RuntimeController(runtime)
+        ctx = ctl.build_context()
+        await runner.run_step(ctx, ctl)
         # 验证消息被修改
-        assert any(m.get("content") == "fixed" for m in messages)
+        assert any(m.get("content") == "fixed" for m in ctl.messages)
 
     async def test_before_serialize_transform(self) -> None:
-        """StepRunner 中 before_serialize Transform。"""
+        """StepRunner 中 before_serialize Transform（通过 run_llm_only）。"""
         hooks = HookRegistry()
-        messages: list = []
         runtime = AgentRuntime(system_prompt="助手")
         runtime._context_payload.mark_dirty()
 
@@ -115,5 +117,7 @@ class TestStepRunnerBranches:
             return {"role": "assistant", "content": "ok"}
 
         runner = StepRunner(hooks=hooks, llm_executor=mock_llm)
-        await runner.run_llm_step(runtime._context_payload, messages, runtime._budget, RuntimeController(runtime))
+        ctl = RuntimeController(runtime)
+        ctx = ctl.build_context()
+        await runner.run_llm_only(ctx, ctl)
         assert "before_serialize" in serialized

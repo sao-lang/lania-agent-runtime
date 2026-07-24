@@ -11,15 +11,15 @@ SemanticKnowledgeStore——语义知识存储适配器。
 
 from __future__ import annotations
 
-import json
-from datetime import datetime
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, cast
 
 from src.memory._persistence import MemoryPersistence
+from src.memory._stores._base import BaseStore
 from src.memory._types import SemanticEdge, SemanticNode
 
 
-class SemanticKnowledgeStore:
+class SemanticKnowledgeStore(BaseStore):
     """
     语义知识存储适配器。
 
@@ -27,13 +27,8 @@ class SemanticKnowledgeStore:
     """
 
     def __init__(self, persistence: MemoryPersistence) -> None:
-        """
-        初始化 SemanticKnowledgeStore。
-
-        Args:
-            persistence: MemoryPersistence 实例。
-        """
-        self._store = persistence
+        """初始化 SemanticKnowledgeStore。"""
+        super().__init__(persistence)
 
     def _node_key(self, node_id: str) -> str:
         return f"sn:{node_id}"
@@ -42,7 +37,20 @@ class SemanticKnowledgeStore:
         return f"se:{source_id}:{target_id}:{relation}"
 
     def _serialize_node(self, node: SemanticNode) -> bytes:
-        data: dict[str, Any] = {
+        return self._serialize_json(node, self._node_to_dict)
+
+    def _deserialize_node(self, data: bytes) -> SemanticNode | None:
+        return cast("SemanticNode | None", self._deserialize_json(data, self._node_from_dict))
+
+    def _serialize_edge(self, edge: SemanticEdge) -> bytes:
+        return self._serialize_json(edge, self._edge_to_dict)
+
+    def _deserialize_edge(self, data: bytes) -> SemanticEdge | None:
+        return cast("SemanticEdge | None", self._deserialize_json(data, self._edge_from_dict))
+
+    @staticmethod
+    def _node_to_dict(node: SemanticNode) -> dict[str, Any]:
+        return {
             "id": node.id,
             "name": node.name,
             "type": node.type,
@@ -56,39 +64,36 @@ class SemanticKnowledgeStore:
             "source": node.source,
             "created_at": node.created_at.isoformat() if node.created_at else None,
         }
-        return json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
 
-    def _deserialize_node(self, data: bytes) -> SemanticNode | None:
-        try:
-            raw = json.loads(data.decode("utf-8"))
-            return SemanticNode(
-                id=raw.get("id", ""),
-                name=raw.get("name", ""),
-                type=raw.get("type", "concept"),
-                description=raw.get("description", ""),
-                aliases=raw.get("aliases", []),
-                embedding=raw.get("embedding"),
-                embedding_dim=raw.get("embedding_dim"),
-                mention_count=raw.get("mention_count", 0),
-                first_seen_at=(
-                    datetime.fromisoformat(raw["first_seen_at"])
-                    if raw.get("first_seen_at") else None
-                ),
-                last_seen_at=(
-                    datetime.fromisoformat(raw["last_seen_at"])
-                    if raw.get("last_seen_at") else None
-                ),
-                source=raw.get("source", "extracted_from_dialogue"),
-                created_at=(
-                    datetime.fromisoformat(raw["created_at"])
-                    if raw.get("created_at") else None
-                ),
-            )
-        except (json.JSONDecodeError, KeyError, TypeError):
-            return None
+    @staticmethod
+    def _node_from_dict(raw: dict) -> SemanticNode:
+        return SemanticNode(
+            id=raw.get("id", ""),
+            name=raw.get("name", ""),
+            type=raw.get("type", "concept"),
+            description=raw.get("description", ""),
+            aliases=raw.get("aliases", []),
+            embedding=raw.get("embedding"),
+            embedding_dim=raw.get("embedding_dim"),
+            mention_count=raw.get("mention_count", 0),
+            first_seen_at=(
+                datetime.fromisoformat(raw["first_seen_at"])
+                if raw.get("first_seen_at") else None
+            ),
+            last_seen_at=(
+                datetime.fromisoformat(raw["last_seen_at"])
+                if raw.get("last_seen_at") else None
+            ),
+            source=raw.get("source", "extracted_from_dialogue"),
+            created_at=(
+                datetime.fromisoformat(raw["created_at"])
+                if raw.get("created_at") else None
+            ),
+        )
 
-    def _serialize_edge(self, edge: SemanticEdge) -> bytes:
-        data: dict[str, Any] = {
+    @staticmethod
+    def _edge_to_dict(edge: SemanticEdge) -> dict[str, Any]:
+        return {
             "id": edge.id,
             "source_node": edge.source_node,
             "target_node": edge.target_node,
@@ -100,29 +105,25 @@ class SemanticKnowledgeStore:
                 edge.last_confirmed_at.isoformat() if edge.last_confirmed_at else None
             ),
         }
-        return json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
 
-    def _deserialize_edge(self, data: bytes) -> SemanticEdge | None:
-        try:
-            raw = json.loads(data.decode("utf-8"))
-            return SemanticEdge(
-                id=raw.get("id", ""),
-                source_node=raw.get("source_node", ""),
-                target_node=raw.get("target_node", ""),
-                relation=raw.get("relation", ""),
-                confidence=raw.get("confidence", 1.0),
-                source=raw.get("source", "extracted"),
-                created_at=(
-                    datetime.fromisoformat(raw["created_at"])
-                    if raw.get("created_at") else None
-                ),
-                last_confirmed_at=(
-                    datetime.fromisoformat(raw["last_confirmed_at"])
-                    if raw.get("last_confirmed_at") else None
-                ),
-            )
-        except (json.JSONDecodeError, KeyError, TypeError):
-            return None
+    @staticmethod
+    def _edge_from_dict(raw: dict) -> SemanticEdge:
+        return SemanticEdge(
+            id=raw.get("id", ""),
+            source_node=raw.get("source_node", ""),
+            target_node=raw.get("target_node", ""),
+            relation=raw.get("relation", ""),
+            confidence=raw.get("confidence", 1.0),
+            source=raw.get("source", "extracted"),
+            created_at=(
+                datetime.fromisoformat(raw["created_at"])
+                if raw.get("created_at") else None
+            ),
+            last_confirmed_at=(
+                datetime.fromisoformat(raw["last_confirmed_at"])
+                if raw.get("last_confirmed_at") else None
+            ),
+        )
 
     async def create_node(self, node: SemanticNode) -> str:
         """
@@ -214,7 +215,7 @@ class SemanticKnowledgeStore:
         node = await self.read_node(node_id)
         if node is not None:
             node.mention_count += 1
-            node.last_seen_at = datetime.utcnow()
+            node.last_seen_at = datetime.now(timezone.utc)
             data = self._serialize_node(node)
             await self._store.put(self._node_key(node.id), data)
 
@@ -250,7 +251,7 @@ class SemanticKnowledgeStore:
             target_node=target_id,
             relation=relation,
             confidence=confidence,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         data = self._serialize_edge(edge)
         await self._store.put(key, data)

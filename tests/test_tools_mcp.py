@@ -12,7 +12,6 @@ import pytest
 from src.tools._mcp import MCPClient, MCPServerConfig, MCPServerManager, MCPToolAdapter
 from src.tools._spec import ToolSpec
 
-
 # ============ Test MCPServerConfig ============
 
 
@@ -306,7 +305,8 @@ class TestMCPClient:
 
         client = MCPClient()
         client._connected = True
-        client._writer = AsyncMock()
+        client._writer = MagicMock()
+        client._writer.drain = AsyncMock()
         client._reader = AsyncMock()  # 确保 reader 不为 None
 
         async def mock_wait_for(coro, timeout):
@@ -323,7 +323,8 @@ class TestMCPClient:
         """stdio 返回 JSON-RPC 错误。"""
         client = MCPClient()
         client._connected = True
-        client._writer = AsyncMock()
+        client._writer = MagicMock()
+        client._writer.drain = AsyncMock()
         client._reader = AsyncMock()
         error_response = json.dumps({
             "jsonrpc": "2.0", "id": 1,

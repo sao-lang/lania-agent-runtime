@@ -101,7 +101,10 @@ class MCPServerManager:
             return specs
 
         except Exception as e:
-            logger.error("连接 MCP Server '%s' 失败: %s", config.name, e)
+            logger.error(
+                "连接 MCP Server '%s' 失败: %s", config.name, e,
+                exc_info=True,
+            )
             # graceful：连接失败时关闭 client 资源
             await client.disconnect()
             return []

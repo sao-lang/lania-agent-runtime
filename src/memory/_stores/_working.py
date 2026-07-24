@@ -10,14 +10,20 @@ WorkingMemoryStore——工作记忆存储适配器。
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
+from typing import Any
 
 from src.memory._persistence import MemoryPersistence
-from src.memory._types import WorkingMemorySnapshot
+from src.memory._stores._base import BaseStore
+from src.memory._types import (
+    BudgetSnapshot,
+    ErrorStateSnapshot,
+    PauseState,
+    WorkingMemorySnapshot,
+)
 
 
-class WorkingMemoryStore:
+class WorkingMemoryStore(BaseStore[WorkingMemorySnapshot]):
     """
     工作记忆存储适配器。
 
@@ -26,13 +32,8 @@ class WorkingMemoryStore:
     """
 
     def __init__(self, persistence: MemoryPersistence) -> None:
-        """
-        初始化 WorkingMemoryStore。
-
-        Args:
-            persistence: MemoryPersistence 实例。
-        """
-        self._store = persistence
+        """初始化 WorkingMemoryStore。"""
+        super().__init__(persistence)
 
     def _key(self, session_id: str) -> str:
         """构造存储键名。"""
@@ -40,7 +41,15 @@ class WorkingMemoryStore:
 
     def _serialize(self, snapshot: WorkingMemorySnapshot) -> bytes:
         """将快照序列化为 bytes。"""
-        data = {
+        return self._serialize_json(snapshot, self._to_dict)
+
+    def _deserialize(self, data: bytes) -> WorkingMemorySnapshot | None:
+        """将 bytes 反序列化为快照。"""
+        return self._deserialize_json(data, self._from_dict)
+
+    @staticmethod
+    def _to_dict(snapshot: WorkingMemorySnapshot) -> dict[str, Any]:
+        return {
             "session_id": snapshot.session_id,
             "step_index": snapshot.step_index,
             "messages": snapshot.messages,
@@ -71,41 +80,30 @@ class WorkingMemoryStore:
             "version": snapshot.version,
             "ttl": snapshot.ttl,
         }
-        return json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
 
-    def _deserialize(self, data: bytes) -> WorkingMemorySnapshot | None:
-        """将 bytes 反序列化为快照。"""
-        try:
-            raw = json.loads(data.decode("utf-8"))
-            from src.memory._types import (
-                BudgetSnapshot,
-                ErrorStateSnapshot,
-                PauseState,
-            )
-
-            return WorkingMemorySnapshot(
-                session_id=raw.get("session_id", ""),
-                step_index=raw.get("step_index", 0),
-                messages=raw.get("messages", []),
-                message_count=raw.get("message_count", 0),
-                total_tokens=raw.get("total_tokens", 0),
-                context_payload=raw.get("context_payload", {}),
-                status=raw.get("status", "running"),
-                plan=raw.get("plan"),
-                budget=BudgetSnapshot(**raw.get("budget", {})),
-                pause_state=PauseState(**raw.get("pause_state", {})),
-                error_state=ErrorStateSnapshot(**raw.get("error_state", {})),
-                hook_states=raw.get("hook_states", {}),
-                captured_at=(
-                    datetime.fromisoformat(raw["captured_at"])
-                    if raw.get("captured_at")
-                    else None
-                ),
-                version=raw.get("version", 1),
-                ttl=raw.get("ttl", 3600),
-            )
-        except (json.JSONDecodeError, KeyError, TypeError):
-            return None
+    @staticmethod
+    def _from_dict(raw: dict) -> WorkingMemorySnapshot:
+        return WorkingMemorySnapshot(
+            session_id=raw.get("session_id", ""),
+            step_index=raw.get("step_index", 0),
+            messages=raw.get("messages", []),
+            message_count=raw.get("message_count", 0),
+            total_tokens=raw.get("total_tokens", 0),
+            context_payload=raw.get("context_payload", {}),
+            status=raw.get("status", "running"),
+            plan=raw.get("plan"),
+            budget=BudgetSnapshot(**raw.get("budget", {})),
+            pause_state=PauseState(**raw.get("pause_state", {})),
+            error_state=ErrorStateSnapshot(**raw.get("error_state", {})),
+            hook_states=raw.get("hook_states", {}),
+            captured_at=(
+                datetime.fromisoformat(raw["captured_at"])
+                if raw.get("captured_at")
+                else None
+            ),
+            version=raw.get("version", 1),
+            ttl=raw.get("ttl", 3600),
+        )
 
     async def save(self, snapshot: WorkingMemorySnapshot) -> None:
         """

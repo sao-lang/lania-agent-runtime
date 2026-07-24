@@ -7,6 +7,7 @@ MemoryService——记忆系统统一外观。
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -26,6 +27,45 @@ from src.memory._types import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _BackgroundTaskGroup:
+    """后台任务组——跟踪 fire-and-forget 任务的生命周期。"""
+
+    def __init__(self) -> None:
+        self._tasks: set[asyncio.Task[Any]] = set()
+
+    def start(self, coro: Any) -> asyncio.Task[Any]:
+        """启动并跟踪一个后台任务。"""
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
+
+    async def shutdown(self, wait: bool = True, timeout: float = 30.0) -> None:
+        """等待所有后台任务完成（或取消）。
+
+        Args:
+            wait: True 等待完成，False 取消所有任务。
+            timeout: 最大等待秒数，超时后强制取消剩余任务。
+        """
+        if not self._tasks:
+            return
+        if wait:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*self._tasks, return_exceptions=True),
+                    timeout=timeout,
+                )
+            except asyncio.TimeoutError:
+                for t in self._tasks:
+                    t.cancel()
+                await asyncio.gather(*self._tasks, return_exceptions=True)
+        else:
+            for t in self._tasks:
+                t.cancel()
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
 
 
 class MemoryService:
@@ -67,6 +107,9 @@ class MemoryService:
         self._entity = EntityMemoryStore(self._store)
         self._semantic = SemanticKnowledgeStore(self._store)
         self._pattern = BehavioralPatternStore(self._store)
+
+        # 后台任务跟踪
+        self._bg_tasks = _BackgroundTaskGroup()
 
     # ── 属性 ──
 
@@ -245,9 +288,7 @@ class MemoryService:
 
         # Layer 3-5: 异步触发（不阻塞回复）
         if user_id:
-            import asyncio
-
-            asyncio.create_task(
+            self._bg_tasks.start(
                 self._safe_background_task(
                     self._entity_extraction_pipeline(user_id, session_id, step_context),
                     f"entity_extraction({user_id}, {session_id})",
@@ -283,9 +324,7 @@ class MemoryService:
 
         # 检查是否需要更新语义知识
         if extractions:
-            import asyncio
-
-            asyncio.create_task(
+            self._bg_tasks.start(
                 self._safe_background_task(
                     self._semantic_pipeline(extractions),
                     f"semantic_pipeline({session_id})",
@@ -353,6 +392,7 @@ class MemoryService:
                 name,
                 type(e).__name__,
                 e,
+                exc_info=True,
             )
 
     # ── 工作记忆快照 ──
@@ -386,3 +426,34 @@ class MemoryService:
             session_id: 会话 ID。
         """
         await self._working.delete(session_id)
+
+    # ── 资源管理 ──
+
+    async def close(self) -> None:
+        """
+        关闭持久化后端，释放资源（如 SQLite 连接）。
+
+        等待所有后台任务完成后关闭存储后端。
+
+        使用方式：
+            memory = MemoryService()
+            try:
+                ...
+            finally:
+                await memory.close()
+        """
+        await self._bg_tasks.shutdown(wait=True)
+        await self._store.close()
+
+    async def __aenter__(self) -> MemoryService:
+        """异步上下文管理器入口。"""
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
+        """异步上下文管理器出口——自动关闭后端连接。"""
+        await self.close()

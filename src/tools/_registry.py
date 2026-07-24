@@ -94,19 +94,36 @@ class ToolRegistry:
         """
         按名称执行工具。
 
+        执行前校验：
+          - 工具必须已注册
+          - 所有 required 参数必须提供
+          - 不允许多余参数
+
         Args:
             name: 工具名称。
-            kwargs: 工具参数（自动移除 'name' 键避免与参数名冲突）。
+            kwargs: 工具参数。
 
         Returns:
             工具执行结果。
 
         Raises:
             KeyError: 如果工具未注册。
+            ValueError: 如果缺少必要参数或有多余参数。
         """
         spec = self._tools.get(name)
         if spec is None:
             raise KeyError(f"工具 '{name}' 未注册")
+
+        # 校验必要参数
+        for req in spec.required:
+            if req not in kwargs:
+                raise ValueError(f"工具 '{name}' 缺少必要参数: {req}")
+
+        # 校验多余参数
+        extra = [k for k in kwargs if k not in spec.parameters]
+        if extra:
+            raise ValueError(f"工具 '{name}' 收到未知参数: {extra}")
+
         return await spec.handler(**kwargs)
 
     def __len__(self) -> int:

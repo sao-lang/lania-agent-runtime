@@ -6,6 +6,7 @@ ToolSpec 是本地函数工具的完整抽象，包含名称、描述、参数 s
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
@@ -25,10 +26,13 @@ class ToolSpec:
         handler: 异步执行函数，接收 **kwargs 返回任意结果。
         required: 必需参数名称列表。
         timeout: 执行超时时间（秒），默认 30.0。
+
+    Raises:
+        ValueError: 如果 name 为空或包含非法字符。
     """
 
     name: str
-    """工具名称，必须全局唯一。"""
+    """工具名称，必须全局唯一，须匹配 ^[a-zA-Z0-9_-]+$。"""
 
     description: str
     """工具描述，LLM 据此决定何时调用。"""
@@ -44,6 +48,13 @@ class ToolSpec:
 
     timeout: float = 30.0
     """执行超时时间（秒）。"""
+
+    def __post_init__(self) -> None:
+        """初始化后校验 name 格式。"""
+        if not self.name or not re.match(r"^[a-zA-Z0-9_-]+$", self.name):
+            raise ValueError(
+                f"Tool name '{self.name}' 格式无效：须匹配 ^[a-zA-Z0-9_-]+$，不能为空"
+            )
 
     def to_openai_schema(self) -> dict:
         """

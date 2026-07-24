@@ -32,11 +32,11 @@
 ### 安装
 
 ```bash
-# 推荐：使用 uv
-uv pip install lania-agent-runtime
+# 推荐：使用 uv（安装所有依赖，含 dev 组）
+uv sync --group dev
 
 # 或使用 pip
-pip install lania-agent-runtime
+pip install -e "."
 ```
 
 ### 模式 A：纯手动，完全解耦（~20 行）
@@ -294,9 +294,9 @@ Skill 预置能力加载，已在 `src/tools/_skill/` 中实现。
 ## 🛠 开发
 
 ```bash
-# 使用 uv 创建虚拟环境并安装
+# 使用 uv 创建虚拟环境并安装（含 dev 依赖）
 uv venv
-uv pip install -e ".[dev]"
+uv sync --group dev
 
 # 运行测试（覆盖率 ≥96%）
 pytest --cov=src --cov-branch --cov-fail-under=96

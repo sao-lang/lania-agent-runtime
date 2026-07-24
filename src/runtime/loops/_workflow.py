@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
 
+from src.runtime.llm._models import FinishReason
 from src.runtime.loops._base import LoopStrategy
 from src.runtime.loops._types import StepResult, StepStatus
 
@@ -174,7 +175,9 @@ class AgentNode(WorkflowNode):
         # 通过 services["_controller"] 获取 RuntimeController
         ctl = ctx.services.get("_controller")
         if ctl is None:
-            raise WorkflowError("AgentNode 需要 RuntimeController 通过 services['_controller'] 注入")
+            raise WorkflowError(
+                "AgentNode 需要 RuntimeController 通过 services['_controller'] 注入"
+            )
 
         # 可选：注入节点级别的 system prompt
         if self._system_prompt:
@@ -574,19 +577,28 @@ class WorkflowLoop(LoopStrategy):
         ctl = self._controller
         current_node_id: str | None = self._workflow.start_node_id
         visited: set[str] = set()
+        in_path: set[str] = set()  # 当前遍历路径，用于循环检测
 
         while current_node_id is not None:
             if ctl.status != "running":
                 break
 
+            # 循环依赖检测
+            if current_node_id in in_path:
+                raise WorkflowError(
+                    f"检测到循环依赖: {current_node_id} 已在当前路径 {in_path}"
+                )
+
             node = self._workflow.get_node(current_node_id)
 
             # 前置依赖检查
             for dep in node.depends_on:
-                if dep not in visited:
+                if dep not in visited and dep not in in_path:
                     raise WorkflowError(
                         f"依赖未就绪: {node.node_id} 需要 {dep}"
                     )
+
+            in_path.add(current_node_id)
 
             # 步前 hook：Interceptor → Transformer → Observer
             if await self._run_before_step_hooks(ctx):
@@ -597,6 +609,7 @@ class WorkflowLoop(LoopStrategy):
             result = await node.execute(ctx, self._step_runner)
             node.result = result
             visited.add(current_node_id)
+            in_path.discard(current_node_id)
 
             # 步后 hook：Transformer → Observer
             await self._run_after_step_hooks(ctx)
@@ -627,10 +640,16 @@ class WorkflowLoop(LoopStrategy):
         ctl = self._controller
         current_node_id: str | None = self._workflow.start_node_id
         visited: set[str] = set()
+        in_path: set[str] = set()  # 当前遍历路径，用于循环检测
 
         while current_node_id is not None:
             if ctl.status != "running":
                 break
+
+            # 循环依赖检测
+            if current_node_id in in_path:
+                yield {"type": "error", "error": f"检测到循环依赖: {current_node_id}"}
+                return
 
             node = self._workflow.get_node(current_node_id)
 
@@ -638,14 +657,22 @@ class WorkflowLoop(LoopStrategy):
 
             # 前置依赖检查
             for dep in node.depends_on:
-                if dep not in visited:
+                if dep not in visited and dep not in in_path:
                     yield {"type": "error", "error": f"依赖未就绪: {node.node_id} 需要 {dep}"}
                     return
+
+            in_path.add(current_node_id)
+
+            # 步前 hook：Interceptor → Transformer → Observer
+            if await self._run_before_step_hooks(ctx):
+                yield {"type": "error", "error": "before_step 拦截"}
+                return
 
             # 执行节点
             result = await node.execute(ctx, self._step_runner)
             node.result = result
             visited.add(current_node_id)
+            in_path.discard(current_node_id)
 
             yield {"type": "node_end", "node_id": current_node_id, "result": str(result)[:200]}
 
@@ -666,9 +693,7 @@ class WorkflowLoop(LoopStrategy):
         if isinstance(response, StepResult):
             return response
         return StepResult(
-            finish_reason=__import__(
-                "src.runtime.llm._models", fromlist=["FinishReason"]
-            ).FinishReason.STOP,
+            finish_reason=FinishReason.STOP,
             status=StepStatus.SUCCESS,
             content=str(response),
         )

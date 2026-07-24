@@ -167,11 +167,13 @@ class Compressor:
         if not episodic_memories:
             return []
 
-        # 1. 排除与保留消息重叠的记忆
-        candidates = [
-            m for m in episodic_memories
-            if m.turn_index not in decision.dedup_turn_indices
-        ]
+        # 1. 排除与保留消息重叠的记忆，同时填充 dedup_memory_ids
+        candidates = []
+        for m in episodic_memories:
+            if m.turn_index in decision.dedup_turn_indices:
+                decision.dedup_memory_ids.add(m.id)
+            else:
+                candidates.append(m)
 
         if not candidates:
             return []

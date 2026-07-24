@@ -20,7 +20,6 @@ from src.runtime.hooks._approval_hook import (
     ToolNamePolicy,
 )
 
-
 # ============ ApprovalPolicy 测试 ============
 
 
@@ -250,8 +249,8 @@ class TestReplanHook:
             return {"steps": [{"id": "new", "description": "new step"}]}
 
         hook = ReplanHook(should_replan=should_replan, replanner_fn=replanner_fn)
-        mock_runtime = type("MockRt", (), {"_plan": None})()
-        ctx = type("MockCtx", (), {"services": {"_runtime": mock_runtime}})()
+        mock_controller = type("MockCtrl", (), {"plan": None})()
+        ctx = type("MockCtx", (), {"services": {"_controller": mock_controller}})()
         result = await hook({}, ctx)
         assert result == {}
         assert replan_called is True
@@ -269,10 +268,10 @@ class TestReplanHook:
             call_count += 1
             return {"steps": []}
 
-        mock_runtime = type("MockRt", (), {"_plan": None})()
+        mock_controller = type("MockCtrl", (), {"plan": None})()
 
         def make_ctx():
-            return type("MockCtx", (), {"services": {"_runtime": mock_runtime}})()
+            return type("MockCtx", (), {"services": {"_controller": mock_controller}})()
 
         hook = ReplanHook(
             should_replan=should_replan,

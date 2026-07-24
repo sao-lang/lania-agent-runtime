@@ -80,9 +80,8 @@ class TestStepRunner:
     """测试 StepRunner 组件。"""
 
     async def test_step_runner_llm_step(self) -> None:
-        """StepRunner.run_llm_step 基本流程。"""
+        """StepRunner LLM 基本流程（通过 run_llm_only）。"""
         hooks = HookRegistry()
-        messages: list = []
         runtime = AgentRuntime(system_prompt="助手")
 
         async def mock_llm(ctx):
@@ -94,13 +93,10 @@ class TestStepRunner:
         )
 
         ctl = RuntimeController(runtime)
-        result = await runner.run_llm_step(
-            runtime._context_payload,
-            messages,
-            runtime._budget,
-            ctl,
-        )
-        assert result is None  # 正常执行，无错误
+        ctx = ctl.build_context()
+        result = await runner.run_llm_only(ctx, ctl)
+        assert result is not None  # 正常执行，返回 LLMResponse
+        assert result.content == "step response"
 
     async def test_step_runner_tool_step(self) -> None:
         """StepRunner.run_tool_step 基本流程。"""
@@ -126,11 +122,10 @@ class TestStepRunner:
         assert any(m.get("content") == "tool result" for m in messages)
 
     async def test_step_runner_llm_blocked(self) -> None:
-        """before_llm intercept block 时 StepRunner 返回错误消息。"""
+        """before_llm intercept block 时 StepRunner 阻断（通过 run_llm_only）。"""
         from src.runtime._types import BlockAction
 
         hooks = HookRegistry()
-        messages: list = []
         runtime = AgentRuntime(system_prompt="助手")
 
         async def block_llm(data, ctx):
@@ -144,14 +139,12 @@ class TestStepRunner:
 
         runner = StepRunner(hooks=hooks, llm_executor=None)
         ctl = RuntimeController(runtime)
-        result = await runner.run_llm_step(
-            runtime._context_payload, messages, runtime._budget, ctl
-        )
-        assert result is not None
-        assert "no llm" in result
+        ctx = ctl.build_context()
+        result = await runner.run_llm_only(ctx, ctl)
+        assert result is None  # 阻断时返回 None
 
     async def test_step_runner_llm_pause(self) -> None:
-        """before_llm intercept pause 触发暂停。"""
+        """before_llm intercept pause 触发暂停（通过 run_llm_only）。"""
         hooks = HookRegistry()
         runtime = AgentRuntime(system_prompt="助手")
 
@@ -166,7 +159,8 @@ class TestStepRunner:
 
         runner = StepRunner(hooks=hooks)
         ctl = RuntimeController(runtime)
-        result = await runner.run_llm_step(runtime._context_payload, [], runtime._budget, ctl)
+        ctx = ctl.build_context()
+        result = await runner.run_llm_only(ctx, ctl)
         assert result is None
         assert runtime.status == "paused"
 
@@ -209,14 +203,15 @@ class TestStepRunner:
         await runner.run_tool_step({"name": "test"}, [], ctl)
 
     async def test_step_runner_no_executors(self) -> None:
-        """StepRunner 无 executor 时不报错。"""
+        """StepRunner 无 executor 时不报错（通过 run_llm_only）。"""
         hooks = HookRegistry()
         runtime = AgentRuntime(system_prompt="助手")
 
         runner = StepRunner(hooks=hooks)
         ctl = RuntimeController(runtime)
+        ctx = ctl.build_context()
 
-        result = await runner.run_llm_step(runtime._context_payload, [], runtime._budget, ctl)
+        result = await runner.run_llm_only(ctx, ctl)
         assert result is None
 
         await runner.run_tool_step(None, [], ctl)

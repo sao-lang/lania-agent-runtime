@@ -9,14 +9,14 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
 from src.runtime._runtime import AgentRuntime
 from src.runtime._types import ExecutorFn, RouterFn
 from src.runtime.config._runtime_config import RuntimeConfig
 from src.runtime.hooks._registry import HookRegistry
 from src.runtime.plugins._plugin import Plugin
 from src.tools import MCPServerManager, SkillManager, ToolRegistry
+
+logger = logging.getLogger(__name__)
 
 
 class RuntimeBuilder:
@@ -267,6 +267,10 @@ class RuntimeBuilder:
 
         if config.services:
             self._services.update(config.services)
+
+        # 注意：config.hooks 和 config.plugins 需要动态导入特定类，
+        # 无法在 from_config 中自动加载。用户需通过 .hooks() / .plugin()
+        # 链式调用手动注册。
 
         return self
 

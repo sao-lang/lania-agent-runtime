@@ -53,7 +53,9 @@ class RuntimeContext:
     # --- 以下字段由 Runtime 内部设置，不对外暴露 ---
     _set_plan_callback: Callable[[dict], None] | None = field(default=None, repr=False)
     _deduct_budget_callback: Callable[[int], None] | None = field(default=None, repr=False)
-    _update_context_payload_callback: Callable[[Callable], None] | None = field(
+    _update_context_payload_callback: Callable[
+        [Callable[["ContextPayload"], "ContextPayload"]], None
+    ] | None = field(
         default=None, repr=False
     )
 

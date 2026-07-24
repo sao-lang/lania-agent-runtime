@@ -12,6 +12,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
+from src.runtime.llm._models import FinishReason
 from src.runtime.loops._base import LoopStrategy
 from src.runtime.loops._types import StepResult, StepStatus
 
@@ -157,7 +158,7 @@ class ReActLoop(LoopStrategy):
             # 流式 LLM 执行
             yield {"type": "llm_start", "step": iteration}
 
-            step_result: StepResult = await self._step_runner.run_step(ctx, runtime)
+            step_result: StepResult = await self._step_runner.run_step(ctx, ctl)
 
             # 产出文本事件
             if step_result.content:
@@ -168,9 +169,10 @@ class ReActLoop(LoopStrategy):
                 yield {"type": "tool_start", "name": tc.name}
                 yield {"type": "tool_end", "name": tc.name}
 
-            # 步后 hook
+            # 步后 hook（重建 ctx 确保看到最新 messages）
+            ctx = ctl.build_context()
             await self._run_after_step_hooks(ctx)
-            runtime._budget.step_count += 1
+            ctl.budget.step_count += 1
 
             if step_result.is_blocked or step_result.status in (
                 StepStatus.PAUSED, StepStatus.ERROR
@@ -211,9 +213,7 @@ class ReActLoop(LoopStrategy):
                 tool_calls=list(response.tool_calls),
             )
         return StepResult(
-            finish_reason=__import__(
-                "src.runtime.llm._models", fromlist=["FinishReason"]
-            ).FinishReason.STOP,  # type: ignore
+            finish_reason=FinishReason.STOP,
             status=StepStatus.SUCCESS,
             content=str(response),
         )

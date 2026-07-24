@@ -29,17 +29,22 @@ user-invocable: true
 
 - **通用开发约束**，必须加载：`rules/00-base.instructions.md`
 - **TypeScript / TSX**：`rules/01-typescript.instructions.md`
+- **Git / 提交管理**：`rules/02-commit.instructions.md`
 - **测试相关任务**：`rules/03-testing.instructions.md`
+- **文档更新**：`rules/04-doc.instructions.md`
 - **Graphify / 架构关系分析**：`rules/05-graphify.instructions.md`
+- **代码重构**：`rules/06-refactor.instructions.md`
 - **发布 / changelog**：`rules/07-release.instructions.md`
 - **Dart**：`rules/08-dart.instructions.md`
 - **Rust**：`rules/09-rust.instructions.md`
 - **Python**：`rules/10-python.instructions.md`
 - **Go**：`rules/11-go.instructions.md`
-- **代码重构** → 加载 `refactor-rules` skill（`../refactor-rules/SKILL.md`）
-- **Git / 提交管理** → 加载 `commit-rules` skill（`../commit-rules/SKILL.md`）
-- **文档更新** → 加载 `doc-rules` skill（`../doc-rules/SKILL.md`）
-- **调试问题** → 加载 `debug-principles` skill（`../debug-principles/SKILL.md`），同时需加载 `debug-tools` skill（`../debug-tools/SKILL.md`）
+- **代码重构**：`rules/06-refactor.instructions.md`
+- **调试问题**：加载 `rules/16-debug-principles.instructions.md`，同时需加载 `debug-tools` skill（`debug-tools/SKILL.md`）
+- **原型阶段 / MVP 快速验证**：`rules/15-prototype.instructions.md`
+- **安全敏感代码**（用户输入/认证/密钥/数据库查询）：`rules/13-security.instructions.md`
+- **错误处理架构**（错误分类/传播/降级/生产日志）：`rules/14-error-handling.instructions.md`
+- **编写 AI 提示词 / Vibe Coding**：`rules/12-prompt.instructions.md`
 
 ## 使用原则
 
@@ -55,10 +60,10 @@ user-invocable: true
 - 如果用户描述模糊，通过项目文件结构推断语言和框架，不确定时询问用户
 
 ### 第二步：加载规则文件
-- 根据任务类型加载对应的规则文件或 skill（参考上方"何时加载什么规则文件"）
+- 根据任务类型加载对应的规则文件（参考上方"何时加载什么规则文件"）
 - 始终加载 `rules/00-base.instructions.md`
-- 如果是重构/Git/文档/调试任务，对应加载 `refactor-rules` / `commit-rules` / `doc-rules` / `debug-principles` skill
-- 如果是调试任务，额外加载 `../debug-tools/SKILL.md`
+- 如果是重构/Git/文档/调试任务，对应加载 `rules/06-refactor.instructions.md` / `rules/02-commit.instructions.md` / `rules/04-doc.instructions.md` / `rules/16-debug-principles.instructions.md`
+- 如果是调试任务，额外加载 `debug-tools/SKILL.md`
 
 ### 第三步：解析设计文档 → 输出方案（R8）
 - **设计文档路径**：项目设计文档统一放在 `docs/design/*.md`；如设计文档中有"关联文档/主文档"引用，**必须顺着引用链阅读所有相关文档**，确保全局理解

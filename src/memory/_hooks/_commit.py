@@ -65,14 +65,17 @@ class MemoryCommitHook:
                 return data
 
             # 找到最后一轮用户消息和助理消息
-            user_message = None
+            # 从末尾开始查找，先找到最后一条 assistant 消息，
+            # 再找它之前最近的一条 user 消息，确保来自同一轮次
             assistant_message = None
+            user_message = None
             for msg in reversed(messages):
-                if msg.get("role") == "user" and user_message is None:
-                    user_message = msg.get("content", "")
                 if msg.get("role") == "assistant" and assistant_message is None:
                     assistant_message = msg.get("content", "")
-                if user_message is not None and assistant_message is not None:
+                if (assistant_message is not None
+                        and msg.get("role") == "user"
+                        and user_message is None):
+                    user_message = msg.get("content", "")
                     break
 
             # Gate 判断
@@ -81,6 +84,7 @@ class MemoryCommitHook:
                 return data
 
             # 构建 StepContext
+            _raw_content = str(user_message or "") + "\n" + str(assistant_message or "")
             step_ctx = StepContext(
                 user_message=user_message,
                 assistant_message=assistant_message,
@@ -92,9 +96,14 @@ class MemoryCommitHook:
                     (user_message or "")[:200]
                     + (" | " + (assistant_message or "")[:200] if assistant_message else "")
                 ),
-                raw=str(user_message or "") + "\n" + str(assistant_message or ""),
+                raw=_raw_content[:16384],  # 限制 16KB
             )
 
+        except Exception:
+            logger.warning("MemoryCommitHook 异常", exc_info=True)
+            return data
+
+        try:
             # 提交到记忆系统
             await self._memory.commit(
                 session_id=ctx.session_id,
@@ -103,6 +112,9 @@ class MemoryCommitHook:
             )
 
         except Exception as e:
-            logger.warning("MemoryCommitHook 写入失败: %s: %s", type(e).__name__, e)
+            logger.warning(
+                "MemoryCommitHook 写入失败: %s: %s", type(e).__name__, e,
+                exc_info=True,
+            )
 
         return data

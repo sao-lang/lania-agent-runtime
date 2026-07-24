@@ -355,9 +355,9 @@ class TestToolRuntimeIntegration:
         )
 
         # 执行 before_llm Transform 验证 tools_schema 注入
-        from src.runtime.context._payload import ContextPayload
-        from src.runtime.context._context import RuntimeContext
         from src.runtime._types import BudgetSnapshot
+        from src.runtime.context._context import RuntimeContext
+        from src.runtime.context._payload import ContextPayload
 
         ctx = RuntimeContext(
             session_id="test",

@@ -8,7 +8,9 @@ ToolDispatcher——三种原语的统一调度入口。
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
 from src.tools._mcp._manager import MCPServerManager
@@ -17,6 +19,8 @@ from src.tools._spec import ToolSpec
 
 if TYPE_CHECKING:
     from src.runtime.context._context import RuntimeContext
+
+logger = logging.getLogger(__name__)
 
 
 class ToolDispatcher:
@@ -83,11 +87,46 @@ class ToolDispatcher:
         Returns:
             工具执行结果消息字典，或 None（无待执行工具时）。
         """
-        # 从最近一条 assistant 消息提取 tool_call
-        tool_call = self._extract_tool_call(ctx)
-        if tool_call is None:
+        # 从最近一条 assistant 消息提取所有待执行的 tool_calls
+        tool_calls = self._extract_tool_calls(ctx)
+        if not tool_calls:
             return None
 
+        # 并行执行所有 tool_calls
+        results = await asyncio.gather(
+            *(self._execute_single_tool_call(tc) for tc in tool_calls),
+            return_exceptions=True,
+        )
+
+        # 返回最后一条结果（兼容单 tool_call 场景的返回值格式）
+        # 实际所有结果会通过 _runtime 的 messages 追加写入
+        for tc, result in zip(tool_calls, results):
+            if isinstance(result, Exception):
+                logger.error(
+                    "Tool %s failed: %s", tc.get("name", ""), result,
+                    exc_info=True,
+                )
+
+        # 取最后一条结果作为返回值（旧接口兼容）
+        last_result = results[-1] if results else None
+        if isinstance(last_result, Exception):
+            return {
+                "role": "tool",
+                "tool_call_id": tool_calls[-1].get("id", ""),
+                "content": f"Tool execution error: {last_result}",
+            }
+        return last_result
+
+    async def _execute_single_tool_call(self, tool_call: dict) -> dict:
+        """
+        执行单个 tool_call。
+
+        Args:
+            tool_call: OpenAI 标准格式的 tool_call 字典。
+
+        Returns:
+            工具执行结果消息字典。
+        """
         # 兼容两种 tool_call 格式：
         #   1. OpenAI 标准格式：name 和 arguments 在 function 嵌套对象中
         #   2. 直接格式：name 和 arguments 在顶层（测试/手动构造场景）
@@ -96,6 +135,8 @@ class ToolDispatcher:
             name = func.get("name", "")
             raw_args = func.get("arguments", "{}")
             if isinstance(raw_args, str):
+                if len(raw_args) > 65536:
+                    raise ValueError(f"Tool '{name}' 参数过长 ({len(raw_args)} chars)")
                 args = json.loads(raw_args)
             else:
                 args = raw_args
@@ -121,23 +162,23 @@ class ToolDispatcher:
         }
 
     @staticmethod
-    def _extract_tool_call(ctx: "RuntimeContext") -> dict | None:
+    def _extract_tool_calls(ctx: "RuntimeContext") -> list[dict]:
         """
-        从 RuntimeContext 的消息中提取最后一个待处理的 tool_call。
+        从 RuntimeContext 的消息中提取所有待处理的 tool_calls。
 
         按 role="assistant" 且包含 tool_calls 字段的消息反向查找，
-        返回第一个 tool_call 条目。
+        返回所有 tool_call 条目。
 
         Args:
             ctx: RuntimeContext 实例。
 
         Returns:
-            tool_call 字典（OpenAI 标准格式），或 None。
+            tool_call 字典列表（OpenAI 标准格式），可能为空。
         """
         messages = ctx.messages
         for msg in reversed(messages):
             if msg.get("role") == "assistant" and "tool_calls" in msg:
                 tool_calls = msg["tool_calls"]
-                if tool_calls and len(tool_calls) > 0:
-                    return tool_calls[0]
-        return None
+                if tool_calls:
+                    return tool_calls
+        return []

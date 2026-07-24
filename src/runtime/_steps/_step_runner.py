@@ -18,7 +18,6 @@ from src.runtime._types import (
     HookPoint,
     PauseAction,
 )
-from src.runtime.context._payload import ContextPayload
 from src.runtime.context._serializer import DefaultSerializer, MessageSerializer
 from src.runtime.hooks._registry import HookRegistry
 from src.runtime.llm._models import FinishReason, LLMResponse
@@ -60,99 +59,6 @@ class StepRunner:
         self._llm_executor = llm_executor
         self._tool_executor = tool_executor
         self._serializer = serializer or DefaultSerializer()
-
-    async def run_llm_step(
-        self,
-        context_payload: ContextPayload,
-        messages: list[dict],
-        budget: Any,
-        controller: RuntimeController,
-    ) -> str | None:
-        """
-        执行 LLM step。
-
-        流程：
-          before_llm Transform（Context assembly, RAG, Token mgmt）
-        → before_serialize Transform（最终格式调整，provider 适配）
-        → 序列化 ContextPayload → messages
-        → before_llm Intercept（Input guardrails, Threat scanning）
-        → LLM 调用
-        → after_llm Intercept（Output guardrails, Groundedness）
-        → after_llm Observer
-
-        Args:
-            context_payload: 上下文负载。
-            messages: 消息列表。
-            budget: 预算快照。
-            controller: RuntimeController 实例（受控 Runtime 接口）。
-
-        Returns:
-            阻断时的错误消息，或 None 表示正常执行。
-        """
-        ctx = controller.build_context()
-
-        # before_llm transformers
-        await self._hooks.run_transformers(HookPoint.BEFORE_LLM, context_payload, ctx)
-
-        # before_serialize transformers（仅在 dirty 时执行）
-        if context_payload.is_dirty:
-            await self._hooks.run_transformers(HookPoint.BEFORE_SERIALIZE, context_payload, ctx)
-
-        # before_llm interceptors
-        intercept_result = await self._hooks.run_interceptors(
-            HookPoint.BEFORE_LLM, context_payload, ctx
-        )
-        if isinstance(intercept_result, BlockAction):
-            error_msg = f"请求被拦截: {intercept_result.reason}"
-            messages.append({"role": "assistant", "content": error_msg})
-            return error_msg
-        if isinstance(intercept_result, PauseAction):
-            await controller.handle_pause(intercept_result)
-            return None
-
-        # 序列化 ContextPayload → messages
-        if context_payload.is_dirty:
-            serialized = await self._serializer.serialize(context_payload)
-            if serialized:
-                # 原地修改 messages 列表（保持引用不变）
-                if messages:
-                    messages[:] = [serialized[0]] + messages[1:]
-                else:
-                    messages[:] = serialized
-
-        # LLM 调用
-        if self._llm_executor is None:
-            return None
-        llm_response = await self._llm_executor(ctx)
-
-        # 追加 LLM 回复
-        if isinstance(llm_response, dict):
-            messages.append(llm_response)
-        elif isinstance(llm_response, str):
-            messages.append({"role": "assistant", "content": llm_response})
-
-        # after_llm interceptors
-        intercept_result = await self._hooks.run_interceptors(
-            HookPoint.AFTER_LLM, llm_response, ctx
-        )
-        if isinstance(intercept_result, BlockAction):
-            return "after_llm 拦截"
-        if isinstance(intercept_result, AllowAction) and intercept_result.modified is not None:
-            modified = intercept_result.modified
-            if messages and messages[-1].get("role") == "assistant":
-                if isinstance(modified, dict):
-                    messages[-1] = modified
-                elif isinstance(modified, str):
-                    messages[-1]["content"] = modified
-
-        # after_llm observers
-        await self._hooks.run_observers(
-            HookPoint.AFTER_LLM,
-            {"type": "after_llm", "response": llm_response},
-            ctx,
-        )
-
-        return None
 
     async def run_tool_step(
         self,

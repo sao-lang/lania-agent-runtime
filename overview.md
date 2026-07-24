@@ -1,5 +1,48 @@
 ### 2026-07-24
 
+#### 10. 第十轮自省：修复 except 块缺失 exc_info
+
+- **时间：** 2026-07-24 19:00
+- **发起人：** user
+- **修改文件：**
+  - `src/memory/_service.py` — `_safe_background_task` 加 `exc_info=True`
+  - `src/memory/_hooks/_commit.py` — 写入失败日志加 `exc_info=True`
+  - `src/tools/_dispatcher.py` — tool 失败日志加 `exc_info=True`
+  - `src/tools/_mcp/_client.py` — 子进程关闭异常日志加 `exc_info=True`
+  - `src/tools/_mcp/_manager.py` — MCP 连接失败日志加 `exc_info=True`
+  - `src/tools/_skill/_manager.py` — skill.toml 加载失败日志加 `exc_info=True`
+- **修改内容：** 6 处 `except` 块补全 `exc_info=True`，确保异常堆栈不被丢失。
+- **复盘结果：** 575 测试通过，ruff 零报错。
+
+#### 9. 第九轮自省：修复 __import__ hack
+
+- **时间：** 2026-07-24 18:30
+- **发起人：** user
+- **修改文件：**
+  - `src/runtime/loops/_plan_execute.py` — 导入 `FinishReason` 替代 `__import__` hack（2 处）
+  - `src/runtime/loops/_workflow.py` — 同上
+  - `src/tools/_mcp/_client.py` — 导入 `os` 替代 `__import__("os")` hack
+- **修改内容：** 消除最后 3 处 `__import__` hack，替换为直接 import。`type: ignore` 从 10 降至 7 处。
+- **复盘结果：** 575 测试通过，ruff 零报错。
+
+#### 8. 第八轮自省：深度修复 plan 路由 + 输入校验 + 防御加固
+
+- **时间：** 2026-07-24 18:00
+- **发起人：** user
+- **修改文件：**
+  - `src/runtime/_runtime.py` — after_llm 前重建 ctx；plan 自定义 step_id 映射 llm；`_default_loop` 加 `_cancelled` 检查
+  - `src/runtime/loops/_react.py` — run_stream 步后 hook 前重建 ctx
+  - `src/runtime/loops/_plan_execute.py` — run_stream 加 `injected_context.clear()`；`_parse_plan` 合并解析逻辑
+  - `src/runtime/loops/_workflow.py` — run/run_stream 加循环依赖检测（`in_path`）
+  - `src/tools/_dispatcher.py` — `json.loads` 加 65536 字符上限
+  - `src/tools/_spec.py` — `__post_init__` 加 name 格式校验（`^[a-zA-Z0-9_-]+$`）
+  - `src/tools/_registry.py` — `execute()` 加 required 参数 + 多余参数检测
+  - `src/context/_manager.py` — recall_raw query 截断至 2048 字符
+  - `src/memory/_hooks/_commit.py` — raw 字段截断至 16384 字符
+  - `src/runtime/_builder.py` — `from_config` 注释说明 hooks/plugins 需手动注册
+- **修改内容：** 全面防御加固 + 功能修复。
+- **复盘结果：** 575 测试通过，ruff 零报错。`__import__` hack 3 处待修复。
+
 #### 7. 全组件解耦：Runtime 纯壳化 + 协议化 + Context/Memory API 分离
 
 - **时间：** 2026-07-24

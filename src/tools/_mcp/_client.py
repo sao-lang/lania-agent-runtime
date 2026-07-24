@@ -7,6 +7,7 @@ MCPClient——MCP 协议客户端。
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -36,6 +37,7 @@ class MCPClient:
         self._writer: Any = None  # 用于写入子进程 stdin
         self._connected: bool = False
         self._request_id: int = 0
+        self._stderr_task: Any = None  # stderr 读取后台任务
 
     # ============ 连接管理 ============
 
@@ -56,12 +58,11 @@ class MCPClient:
         Raises:
             RuntimeError: 连接失败时抛出。
         """
-        import asyncio
-
         try:
             merged_env = None
             if env:
-                merged_env = dict(__import__("os").environ)
+                import os
+                merged_env = dict(os.environ)
                 merged_env.update(env)
 
             self._process = await asyncio.create_subprocess_exec(
@@ -76,6 +77,9 @@ class MCPClient:
             self._writer = self._process.stdin
             self._reader = self._process.stdout
             self._connected = True
+
+            # 启动 stderr 读取任务（防止管道缓冲区填满导致进程阻塞）
+            self._stderr_task = asyncio.create_task(self._read_stderr())
 
             # 发送初始化请求
             init_result = await self._send_request("initialize", {
@@ -103,6 +107,7 @@ class MCPClient:
         try:
             import httpx
 
+            # 注意：url 在 try 块内赋值，异常时不会污染状态
             self._sse_url = url
             self._http_client = httpx.AsyncClient(timeout=30.0)
             self._connected = True
@@ -120,6 +125,17 @@ class MCPClient:
         except Exception as e:
             raise RuntimeError(f"MCP SSE 连接失败: {e}") from e
 
+    async def _read_stderr(self) -> None:
+        """持续读取子进程 stderr 并记录日志，防止管道阻塞。"""
+        try:
+            assert self._process is not None and self._process.stderr is not None
+            async for line in self._process.stderr:
+                logger.debug("MCP stderr: %s", line.decode("utf-8", errors="replace").rstrip())
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning("MCP stderr 读取异常: %s", e)
+
     async def disconnect(self) -> None:
         """
         断开连接，清理资源。
@@ -128,19 +144,32 @@ class MCPClient:
         """
         self._connected = False
 
+        # 取消 stderr 读取任务
+        if self._stderr_task is not None:
+            self._stderr_task.cancel()
+            try:
+                await self._stderr_task
+            except asyncio.CancelledError:
+                pass
+            self._stderr_task = None
+
         # 关闭子进程
         if self._process is not None:
             try:
                 self._process.terminate()
-                import asyncio
-
                 try:
                     await asyncio.wait_for(self._process.wait(), timeout=5.0)
                 except asyncio.TimeoutError:
                     self._process.kill()
-                    await self._process.wait()
+                    try:
+                        await asyncio.wait_for(self._process.wait(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        logger.warning("MCP 子进程 kill 后未退出，强制忽略")
             except Exception as e:
-                logger.warning("MCP 子进程关闭异常: %s", e)
+                logger.warning(
+                    "MCP 子进程关闭异常: %s", e,
+                    exc_info=True,
+                )
             self._process = None
             self._writer = None
             self._reader = None
@@ -239,8 +268,6 @@ class MCPClient:
         Returns:
             响应结果字典。
         """
-        import asyncio
-
         if self._writer is None or self._reader is None:
             raise RuntimeError("stdio 管道未初始化")
 

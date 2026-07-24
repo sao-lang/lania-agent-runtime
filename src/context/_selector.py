@@ -133,7 +133,7 @@ class Selector:
             turns.append(current_turn)
 
         # turns 现在是 [最早轮次, ..., 最晚轮次]
-        turns.reverse()
+        turns = list(reversed(turns))
 
         # 确定保留的轮次数
         preserve = max(config.min_preserve_turns, config.preserve_turns)
@@ -190,6 +190,6 @@ class Selector:
                 kept_turn_indices.add(turn_idx)
 
         return {
-            "memory_ids": set(),  # 由 Compressor 在加载记忆后填充具体 ID
+            "memory_ids": set(),  # 由 Compressor._select_memories 在加载记忆后填充具体 ID
             "turn_indices": kept_turn_indices,
         }

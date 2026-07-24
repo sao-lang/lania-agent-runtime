@@ -10,15 +10,15 @@ EntityMemoryStore——实体记忆存储适配器。
 
 from __future__ import annotations
 
-import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from src.memory._persistence import MemoryPersistence
+from src.memory._stores._base import BaseStore
 from src.memory._types import EntityAttributeValue, EntityMemoryEntry
 
 
-class EntityMemoryStore:
+class EntityMemoryStore(BaseStore[EntityMemoryEntry]):
     """
     实体记忆存储适配器。
 
@@ -29,13 +29,8 @@ class EntityMemoryStore:
     _MAX_HISTORY = 20  # 每个属性保留的最大历史记录数
 
     def __init__(self, persistence: MemoryPersistence) -> None:
-        """
-        初始化 EntityMemoryStore。
-
-        Args:
-            persistence: MemoryPersistence 实例。
-        """
-        self._store = persistence
+        """初始化 EntityMemoryStore。"""
+        super().__init__(persistence)
 
     def _key(self, entity_type: str, entity_key: str) -> str:
         """构造存储键名。"""
@@ -43,25 +38,45 @@ class EntityMemoryStore:
 
     def _serialize(self, entry: EntityMemoryEntry) -> bytes:
         """将实体序列化为 bytes。"""
-        now = datetime.utcnow()
+        return self._serialize_json(entry, self._entry_to_dict)
 
-        def attr_to_dict(attr: EntityAttributeValue) -> dict:
-            return {
-                "value": attr.value,
-                "confidence": attr.confidence,
-                "recorded_at": attr.recorded_at.isoformat() if attr.recorded_at else None,
-                "source_session": attr.source_session,
-            }
+    def _deserialize(self, data: bytes) -> EntityMemoryEntry | None:
+        """将 bytes 反序列化为实体条目。"""
+        return self._deserialize_json(data, self._entry_from_dict)
 
-        data: dict[str, Any] = {
+    @staticmethod
+    def _attr_to_dict(attr: EntityAttributeValue) -> dict:
+        return {
+            "value": attr.value,
+            "confidence": attr.confidence,
+            "recorded_at": attr.recorded_at.isoformat() if attr.recorded_at else None,
+            "source_session": attr.source_session,
+        }
+
+    @staticmethod
+    def _attr_from_dict(d: dict) -> EntityAttributeValue:
+        return EntityAttributeValue(
+            value=d.get("value"),
+            confidence=d.get("confidence", 1.0),
+            recorded_at=(
+                datetime.fromisoformat(d["recorded_at"])
+                if d.get("recorded_at")
+                else None
+            ),
+            source_session=d.get("source_session", ""),
+        )
+
+    def _entry_to_dict(self, entry: EntityMemoryEntry) -> dict[str, Any]:
+        now = datetime.now(timezone.utc)
+        return {
             "entity_type": entry.entity_type,
             "entity_key": entry.entity_key,
             "attributes": {
-                name: attr_to_dict(attr)
+                name: self._attr_to_dict(attr)
                 for name, attr in entry.attributes.items()
             },
             "history": {
-                name: [attr_to_dict(a) for a in hist]
+                name: [self._attr_to_dict(a) for a in hist]
                 for name, hist in entry.history.items()
             },
             "created_at": (
@@ -71,58 +86,39 @@ class EntityMemoryStore:
             "last_source_session": entry.last_source_session,
             "ttl": entry.ttl.isoformat() if entry.ttl else None,
         }
-        return json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
 
-    def _deserialize(self, data: bytes) -> EntityMemoryEntry | None:
-        """将 bytes 反序列化为实体条目。"""
-        try:
-            raw = json.loads(data.decode("utf-8"))
-
-            def dict_to_attr(d: dict) -> EntityAttributeValue:
-                return EntityAttributeValue(
-                    value=d.get("value"),
-                    confidence=d.get("confidence", 1.0),
-                    recorded_at=(
-                        datetime.fromisoformat(d["recorded_at"])
-                        if d.get("recorded_at")
-                        else None
-                    ),
-                    source_session=d.get("source_session", ""),
-                )
-
-            attributes = {
-                name: dict_to_attr(attr)
-                for name, attr in raw.get("attributes", {}).items()
-            }
-            history = {
-                name: [dict_to_attr(a) for a in hist]
-                for name, hist in raw.get("history", {}).items()
-            }
-
-            return EntityMemoryEntry(
-                entity_type=raw.get("entity_type", ""),
-                entity_key=raw.get("entity_key", ""),
-                attributes=attributes,
-                history=history,
-                created_at=(
-                    datetime.fromisoformat(raw["created_at"])
-                    if raw.get("created_at")
-                    else None
-                ),
-                last_updated_at=(
-                    datetime.fromisoformat(raw["last_updated_at"])
-                    if raw.get("last_updated_at")
-                    else None
-                ),
-                last_source_session=raw.get("last_source_session", ""),
-                ttl=(
-                    datetime.fromisoformat(raw["ttl"])
-                    if raw.get("ttl")
-                    else None
-                ),
-            )
-        except (json.JSONDecodeError, KeyError, TypeError):
-            return None
+    @staticmethod
+    def _entry_from_dict(raw: dict) -> EntityMemoryEntry:
+        attributes = {
+            name: EntityMemoryStore._attr_from_dict(attr)
+            for name, attr in raw.get("attributes", {}).items()
+        }
+        history = {
+            name: [EntityMemoryStore._attr_from_dict(a) for a in hist]
+            for name, hist in raw.get("history", {}).items()
+        }
+        return EntityMemoryEntry(
+            entity_type=raw.get("entity_type", ""),
+            entity_key=raw.get("entity_key", ""),
+            attributes=attributes,
+            history=history,
+            created_at=(
+                datetime.fromisoformat(raw["created_at"])
+                if raw.get("created_at")
+                else None
+            ),
+            last_updated_at=(
+                datetime.fromisoformat(raw["last_updated_at"])
+                if raw.get("last_updated_at")
+                else None
+            ),
+            last_source_session=raw.get("last_source_session", ""),
+            ttl=(
+                datetime.fromisoformat(raw["ttl"])
+                if raw.get("ttl")
+                else None
+            ),
+        )
 
     async def read(
         self,
@@ -191,7 +187,7 @@ class EntityMemoryStore:
         Returns:
             更新后的实体条目。
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         existing = await self.read(entity_type, entity_key)
 
         if existing is None:

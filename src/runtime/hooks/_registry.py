@@ -35,6 +35,7 @@ class HandlerRecord:
     handler: Callable
     priority: int = 0
     name: str = ""
+    enabled: bool = True
 
 
 class HookRegistry:
@@ -150,6 +151,7 @@ class HookRegistry:
                     handler=r.handler,
                     priority=r.priority,
                     name=r.name,
+                    enabled=r.enabled,
                 )
                 for r in self._point_handlers[point]
             ]
@@ -165,9 +167,34 @@ class HookRegistry:
                         handler=r.handler,
                         priority=r.priority,
                         name=r.name,
+                        enabled=r.enabled,
                     )
                 )
         return result
+
+    def enable(self, handler_id: str, enabled: bool = True) -> None:
+        """
+        启用或禁用指定 handler。
+
+        Args:
+            handler_id: handler 的 ID。
+            enabled: True 启用，False 禁用。
+
+        Raises:
+            KeyError: 如果 handler_id 不存在。
+        """
+        record = self._handlers[handler_id]
+        record.enabled = enabled
+
+        # 同步更新 point_handlers 中的引用
+        for r in self._point_handlers[record.point]:
+            if r.handler_id == handler_id:
+                r.enabled = enabled
+                break
+
+    def disable(self, handler_id: str) -> None:
+        """禁用指定 handler 的快捷方式。"""
+        self.enable(handler_id, enabled=False)
 
     def replace(self, handler_id: str, new_handler: Callable) -> None:
         """
@@ -202,7 +229,7 @@ class HookRegistry:
             经过所有 Transform 处理后的数据。
         """
         for record in self._point_handlers[point]:
-            if record.primitive == PrimitiveType.TRANSFORM:
+            if record.primitive == PrimitiveType.TRANSFORM and record.enabled:
                 data = await record.handler(data, ctx)
         return data
 
@@ -219,7 +246,7 @@ class HookRegistry:
             第一个 BlockAction 或 PauseAction，或所有 Intercept 放行后的 AllowAction。
         """
         for record in self._point_handlers[point]:
-            if record.primitive == PrimitiveType.INTERCEPT:
+            if record.primitive == PrimitiveType.INTERCEPT and record.enabled:
                 result = await record.handler(data, ctx)
                 if isinstance(result, (BlockAction, PauseAction)):
                     return result
@@ -241,7 +268,7 @@ class HookRegistry:
 
         tasks = []
         for record in self._point_handlers[point]:
-            if record.primitive == PrimitiveType.OBSERVER:
+            if record.primitive == PrimitiveType.OBSERVER and record.enabled:
                 tasks.append(record.handler(event, ctx))
 
         if tasks:

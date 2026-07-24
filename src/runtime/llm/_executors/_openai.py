@@ -12,7 +12,7 @@ OpenAI / OpenAI-compatible API 的 LLMExecutor 实现。
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, AsyncIterator, cast
 
 from openai import APIError, APITimeoutError, RateLimitError
 
@@ -25,6 +25,7 @@ from src.runtime.llm._providers._openai import OpenAIProvider
 
 if TYPE_CHECKING:
     from src.runtime.context._context import RuntimeContext
+    from src.runtime.llm._providers._base import LLMProviderResponse
 
 
 class OpenAILLMExecutor(StreamableLLMExecutor):
@@ -109,7 +110,7 @@ class OpenAILLMExecutor(StreamableLLMExecutor):
                     stream=False,
                 )
                 # 非流式下返回 LLMProviderResponse
-                return self._to_response(raw, params.model)  # type: ignore[arg-type]
+                return self._to_response(cast("LLMProviderResponse", raw), params.model)
 
             except self.RETRYABLE_ERRORS as e:
                 last_error = e
@@ -125,7 +126,7 @@ class OpenAILLMExecutor(StreamableLLMExecutor):
 
                 raise LLMExecutionError(
                     last_error=last_error,
-                    consecutive_errors=ctx.step_index,
+                    consecutive_errors=attempt + 1,
                     model=params.model,
                 )
 
@@ -167,7 +168,8 @@ class OpenAILLMExecutor(StreamableLLMExecutor):
 
         collector = AsyncStreamCollector()
         # stream 是 AsyncIterator[dict]
-        async for chunk in stream:  # type: ignore[union-attr]
+        assert isinstance(stream, AsyncIterator), "stream=True 应返回 AsyncIterator"
+        async for chunk in stream:
             collector.collect(chunk)
 
         assembled = collector.assemble()

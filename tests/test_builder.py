@@ -113,9 +113,9 @@ class TestRuntimeBuilder:
 
     async def test_context_with_memory(self) -> None:
         """.context() 配合 .memory() 时，ContextConfig 传递给 ContextManager。"""
+        from src.context import ContextConfig
         from src.memory._backends._sqlite import SQLitePersistence
         from src.memory._service import MemoryService
-        from src.context import ContextConfig
 
         mem = MemoryService(persistence=SQLitePersistence(":memory:"))
         runtime = (RuntimeBuilder()
@@ -126,6 +126,7 @@ class TestRuntimeBuilder:
         cfg = runtime._services["context_manager"]._config
         assert cfg.compression_level == 4
         assert cfg.preserve_turns == 5
+        await mem.close()
 
     async def test_context_without_memory_silent(self) -> None:
         """.context() 单独使用时不崩溃，配置被静默忽略（带 warning）。"""

@@ -144,7 +144,7 @@ class ContextManager:
         query = ""
         for msg in reversed(messages):
             if msg.get("role") == "user":
-                query = msg.get("content", "") or ""
+                query = (msg.get("content", "") or "")[:2048]  # 截断超长 query
                 break
 
         # 从 decision 中获取被裁轮次的 turn 范围

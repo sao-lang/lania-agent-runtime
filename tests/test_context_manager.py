@@ -40,7 +40,7 @@ def mock_memory() -> MagicMock:
 @pytest.fixture
 def ctx() -> MagicMock:
     """创建 mock RuntimeContext。"""
-    c = MagicMock()
+    c = MagicMock(spec=["session_id", "step_index", "messages", "services", "budget"])
     c.session_id = "test_sess"
     c.step_index = 2
     c.messages = (

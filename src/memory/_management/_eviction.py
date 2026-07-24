@@ -7,7 +7,7 @@ EvictionManager——遗忘管理器。
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from src.memory._stores import EpisodicMemoryStore, SemanticKnowledgeStore
 
@@ -59,7 +59,7 @@ class EvictionManager:
         Args:
             user_id: 用户 ID。
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # Layer 2: 按 content_type 不同 TTL 清理
         for content_type, ttl in [

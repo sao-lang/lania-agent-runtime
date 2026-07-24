@@ -45,23 +45,17 @@ class DefaultSerializer:
 
     def __init__(self) -> None:
         """初始化默认序列化器。"""
-        self._last_result: list[dict] | None = None
 
     async def serialize(self, payload: ContextPayload) -> list[dict]:
         """
         将 ContextPayload 序列化为 messages 列表。
 
-        仅在 payload 为 dirty 时重新序列化，否则返回上次结果。
-
         Args:
             payload: 上下文负载。
 
         Returns:
-            messages 列表。
+            符合 LLM API 格式的 messages 列表。
         """
-        if not payload.is_dirty and self._last_result is not None:
-            return self._last_result
-
         messages: list[dict] = []
 
         # 1. system message
@@ -94,8 +88,5 @@ class DefaultSerializer:
                 messages.append(result)
             else:
                 messages.append({"role": "tool", "content": str(result)})
-
-        payload.mark_clean()
-        self._last_result = messages
 
         return messages

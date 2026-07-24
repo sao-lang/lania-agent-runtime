@@ -39,8 +39,8 @@ class ContextAssemblerHook:
         Transform 调用入口。
 
         执行五阶段管线并将组装好的 messages 存入
-        ctx.services["_assembled_messages"]，供 Runtime 的
-        _execute_llm_step 在序列化阶段直接使用。
+        data.assembled_messages，供 Runtime 的 _execute_llm_step
+        在序列化阶段直接使用。
 
         Args:
             data: ContextPayload 实例。
@@ -50,6 +50,6 @@ class ContextAssemblerHook:
             原样返回 data（不做修改）。
         """
         llm_messages = await self._manager.assemble(ctx)
-        # 存入 services，Runtime 的 _execute_llm_step 会检查此键
-        ctx.services["_assembled_messages"] = llm_messages
+        # 存入 data.assembled_messages，Runtime 会检查此字段
+        data.assembled_messages = llm_messages
         return data

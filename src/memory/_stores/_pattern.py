@@ -10,15 +10,15 @@ BehavioralPatternStore——行为模式存储适配器。
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from typing import Any
 
 from src.memory._persistence import MemoryPersistence
+from src.memory._stores._base import BaseStore
 from src.memory._types import BehavioralPattern
 
 
-class BehavioralPatternStore:
+class BehavioralPatternStore(BaseStore[BehavioralPattern]):
     """
     行为模式存储适配器。
 
@@ -27,19 +27,21 @@ class BehavioralPatternStore:
     """
 
     def __init__(self, persistence: MemoryPersistence) -> None:
-        """
-        初始化 BehavioralPatternStore。
-
-        Args:
-            persistence: MemoryPersistence 实例。
-        """
-        self._store = persistence
+        """初始化 BehavioralPatternStore。"""
+        super().__init__(persistence)
 
     def _key(self, user_id: str) -> str:
         return f"bp:{user_id}"
 
     def _serialize(self, pattern: BehavioralPattern) -> bytes:
-        data: dict[str, Any] = {
+        return self._serialize_json(pattern, self._to_dict)
+
+    def _deserialize(self, data: bytes) -> BehavioralPattern | None:
+        return self._deserialize_json(data, self._from_dict)
+
+    @staticmethod
+    def _to_dict(pattern: BehavioralPattern) -> dict[str, Any]:
+        return {
             "user_id": pattern.user_id,
             "patterns": pattern.patterns,
             "total_interactions": pattern.total_interactions,
@@ -57,31 +59,27 @@ class BehavioralPatternStore:
                 if pattern.created_at else None
             ),
         }
-        return json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
 
-    def _deserialize(self, data: bytes) -> BehavioralPattern | None:
-        try:
-            raw = json.loads(data.decode("utf-8"))
-            return BehavioralPattern(
-                user_id=raw.get("user_id", ""),
-                patterns=raw.get("patterns", {}),
-                total_interactions=raw.get("total_interactions", 0),
-                version=raw.get("version", 1),
-                last_converged_at=(
-                    datetime.fromisoformat(raw["last_converged_at"])
-                    if raw.get("last_converged_at") else None
-                ),
-                last_interaction_at=(
-                    datetime.fromisoformat(raw["last_interaction_at"])
-                    if raw.get("last_interaction_at") else None
-                ),
-                created_at=(
-                    datetime.fromisoformat(raw["created_at"])
-                    if raw.get("created_at") else None
-                ),
-            )
-        except (json.JSONDecodeError, KeyError, TypeError):
-            return None
+    @staticmethod
+    def _from_dict(raw: dict) -> BehavioralPattern:
+        return BehavioralPattern(
+            user_id=raw.get("user_id", ""),
+            patterns=raw.get("patterns", {}),
+            total_interactions=raw.get("total_interactions", 0),
+            version=raw.get("version", 1),
+            last_converged_at=(
+                datetime.fromisoformat(raw["last_converged_at"])
+                if raw.get("last_converged_at") else None
+            ),
+            last_interaction_at=(
+                datetime.fromisoformat(raw["last_interaction_at"])
+                if raw.get("last_interaction_at") else None
+            ),
+            created_at=(
+                datetime.fromisoformat(raw["created_at"])
+                if raw.get("created_at") else None
+            ),
+        )
 
     async def read(self, user_id: str) -> BehavioralPattern | None:
         """
