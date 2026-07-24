@@ -73,6 +73,7 @@ class AgentRuntime:
         tools: ToolRegistry | None = None,
         mcp: MCPServerManager | None = None,
         skills: SkillManager | None = None,
+        memory_service: Any | None = None,
     ) -> None:
         """
         初始化 AgentRuntime。
@@ -96,6 +97,8 @@ class AgentRuntime:
             mcp: MCPServerManager 实例。提供时自动集成到 ToolDispatcher。
             skills: SkillManager 实例。提供时自动注册 before_llm
                 Transform 注入领域知识。
+            memory_service: MemoryService 实例。提供时自动注册 after_step
+                Transform 写入持久化记忆。
         """
         self.session_id: str = f"sess_{uuid.uuid4().hex[:12]}"
         self.agent_id: str = agent_id or f"agent_{uuid.uuid4().hex[:8]}"
@@ -164,6 +167,35 @@ class AgentRuntime:
                 primitive=PrimitiveType.TRANSFORM,
                 name="_skill_inject",
                 priority=200,
+            )
+
+        # Memory 原语集成
+        self._memory_service = memory_service
+        if memory_service is not None:
+            from src.context._manager import ContextManager
+            from src.context.context_hooks import ContextAssemblerHook
+            from src.memory._hooks import MemoryCommitHook
+
+            # 创建 ContextManager，编排上下文五阶段管线
+            context_manager = ContextManager(memory=memory_service)
+            self._services["context_manager"] = context_manager
+
+            # before_llm Transform：上下文编排（在 tools 和 skills 之后）
+            self._hooks.register(
+                HookPoint.BEFORE_LLM,
+                ContextAssemblerHook(context_manager),
+                primitive=PrimitiveType.TRANSFORM,
+                name="_context_assembler",
+                priority=300,
+            )
+
+            # after_step Transform：写入持久化记忆
+            self._hooks.register(
+                HookPoint.AFTER_STEP,
+                MemoryCommitHook(memory_service),
+                primitive=PrimitiveType.TRANSFORM,
+                name="_memory_commit",
+                priority=500,
             )
 
         # LoopStrategy —— 使用新接口或旧接口
@@ -1004,35 +1036,41 @@ class AgentRuntime:
         # before_llm transformers（Context assembly, RAG, Token mgmt）
         await self._hooks.run_transformers(HookPoint.BEFORE_LLM, self._context_payload, ctx)
 
-        # before_serialize transformers（仅在 dirty 时执行）
-        # 用于最终格式调整和 provider 适配
-        if self._context_payload.is_dirty:
-            await self._hooks.run_transformers(
-                HookPoint.BEFORE_SERIALIZE, self._context_payload, ctx
-            )
-
-        # before_llm interceptors（Input guardrails, Rate limiting）
-        intercept_result = await self._hooks.run_interceptors(
-            HookPoint.BEFORE_LLM, self._context_payload, ctx
-        )
-        if isinstance(intercept_result, BlockAction):
-            self.status = "error"
-            error_msg = f"请求被拦截: {intercept_result.reason}"
-            self._messages.append({"role": "assistant", "content": error_msg})
-            self._error_state["last_error"] = RuntimeError(error_msg)
-            self._error_state["consecutive_errors"] += 1
-            return
-        if isinstance(intercept_result, PauseAction):
-            await self._handle_pause(intercept_result)
-            return
-
-        # 序列化 ContextPayload → messages
-        if self._context_payload.is_dirty:
-            serialized = await self._serializer.serialize(self._context_payload)
-            if serialized:
-                self._messages = (
-                    [serialized[0]] + self._messages[1:] if self._messages else serialized
+        # 检查 ContextAssemblerHook 是否已组装好 messages
+        assembled = ctx.services.get("_assembled_messages")
+        if assembled is not None:
+            self._messages = list(assembled)
+            # 清理标记，避免后续重复使用
+            del ctx.services["_assembled_messages"]
+        else:
+            # before_serialize transformers（仅在 dirty 时执行）
+            if self._context_payload.is_dirty:
+                await self._hooks.run_transformers(
+                    HookPoint.BEFORE_SERIALIZE, self._context_payload, ctx
                 )
+
+            # before_llm interceptors
+            intercept_result = await self._hooks.run_interceptors(
+                HookPoint.BEFORE_LLM, self._context_payload, ctx
+            )
+            if isinstance(intercept_result, BlockAction):
+                self.status = "error"
+                error_msg = f"请求被拦截: {intercept_result.reason}"
+                self._messages.append({"role": "assistant", "content": error_msg})
+                self._error_state["last_error"] = RuntimeError(error_msg)
+                self._error_state["consecutive_errors"] += 1
+                return
+            if isinstance(intercept_result, PauseAction):
+                await self._handle_pause(intercept_result)
+                return
+
+            # 序列化 ContextPayload → messages
+            if self._context_payload.is_dirty:
+                serialized = await self._serializer.serialize(self._context_payload)
+                if serialized:
+                    self._messages = (
+                        [serialized[0]] + self._messages[1:] if self._messages else serialized
+                    )
 
         # LLM 调用（兼容新旧接口）
         executor = self._llm_executor

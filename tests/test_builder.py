@@ -98,9 +98,14 @@ class TestRuntimeBuilder:
         )
         assert runtime._services.get("weather_api_key") == "test"
 
-    async def test_memory_config(self) -> None:
-        runtime = RuntimeBuilder().system_prompt("助手").memory("sqlite", path="./test.db").build()
-        assert runtime._services.get("memory_config", {}).get("backend") == "sqlite"
+    async def test_memory_service(self) -> None:
+        from src.memory._backends._sqlite import SQLitePersistence
+        from src.memory._service import MemoryService
+
+        persistence = SQLitePersistence(":memory:")
+        memory = MemoryService(persistence=persistence)
+        runtime = RuntimeBuilder().system_prompt("助手").memory(service=memory).build()
+        assert runtime._memory_service is memory
 
     async def test_loop_config(self) -> None:
         runtime = (

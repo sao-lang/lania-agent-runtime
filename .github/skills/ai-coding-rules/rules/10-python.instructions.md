@@ -15,6 +15,53 @@ applyTo: '**/*.py'
 - 日志用 `import logging` 模块，禁止 `print()`
 - 异步用 `async def` + `asyncio`，而非 `threading`
 
+## 风格规范（PEP 8 + 项目约定）
+
+### 命名规范
+
+| 类型 | 风格 | 示例 |
+|------|------|------|
+| 变量/函数/方法 | `snake_case` | `user_name`, `get_user()` |
+| 类/异常 | `PascalCase` | `UserService`, `AuthError` |
+| 常量 | `UPPER_SNAKE_CASE` | `MAX_RETRY_COUNT` |
+| 模块/包 | `snake_case` | `auth_service.py` |
+| 私有成员 | 前导下划线 `_` | `_internal_cache` |
+| 名称混淆 | 双下划线 `__` | `__private_method` |
+| 类型变量 | `PascalCase` 短名 | `T`, `ResponseT` |
+
+### 格式规范
+
+- **行长度**：≤ 120 字符（项目 ruff 配置）
+- **缩进**：4 空格，禁止 Tab
+- **引号**：双引号 `"`（ruff 配置 `quote-style = "double"`）
+- **空行**：顶级定义之间 2 空行，方法之间 1 空行
+- **import 顺序**：标准库 → 第三方 → 本地模块（ruff I 规则自动排序）
+- **行尾逗号**：多行结构（列表/dict/函数参数）每行末尾加逗号
+
+### 类型注解（PEP 484）
+
+- 所有函数参数和返回值必须标注类型
+- 使用 `|` 替代 `Optional`：`str | None` 而非 `Optional[str]`
+- 集合类型标注元素类型：`list[int]` 而非 `list`
+- 使用 `TypeVar` 标注泛型，避免 `Any`
+- 复杂的类型别名用 `type` 语句（Python 3.12+）：`type JSON = dict[str, Any]`
+
+### 异常处理
+
+- 捕获具体异常类型，禁止裸 `except:`
+- 使用 `contextlib.suppress` 替代静默捕获的场景
+- 自定义异常继承自 `Exception` 而非 `BaseException`
+- 异常信息包含上下文：`raise AuthError(f"User {uid} not found")`
+
+### 字面量与构造
+
+- **字符串拼接**：用 f-string 而非 `+` 或 `%`
+- **路径操作**：用 `pathlib.Path` 而非 `os.path`
+- **文件读写**：用 `with open(...) as f:` 而非手动 close
+- **判空**：`if not items:` 而非 `if len(items) == 0:`
+- **循环**：优先 `for item in collection:` 而非 `for i in range(len(...))`
+- **字典取值**：`dict.get(key, default)` 而非 try/except KeyError
+
 ## 注释规范
 
 - 遵循 PEP 257 文档注释规范

@@ -13,13 +13,58 @@ applyTo: '**/*.{ts,tsx}'
 - 类型引用用 `import type` 而非 `import`，避免运行时残留
 - 优先命名导出（named export），减少 `export default`
 
-## 注释规范
+## 风格规范（TypeScript 官方 + Google TS 风格 + 项目约定）
 
-- 公开 API 使用 JSDoc 格式（`/** */`）写文档注释
-- 组件 props 使用 `@param` 标注每个属性的用途
-- 复杂逻辑添加行内注释，解释"为什么做"而非"做了什么"
-- 使用 `@deprecated` 标注已废弃 API，并注明替代方案
-- 修改代码不得删除已有注释，逻辑变化时追加说明
+### 命名规范
+
+| 类型 | 风格 | 示例 |
+|------|------|------|
+| 变量/函数/方法 | `camelCase` | `userName`, `getUser()` |
+| 类/接口/类型 | `PascalCase` | `UserService`, `UserProps` |
+| 常量（模块级） | `UPPER_SNAKE_CASE` | `MAX_RETRY_COUNT` |
+| 文件/目录 | `kebab-case` | `auth-service.ts` |
+| React 组件文件 | `PascalCase` | `UserProfile.tsx` |
+| 枚举成员 | `PascalCase` | `UserRole.Admin` |
+| 私有成员 | `#` 或 `_` 前缀 | `#cache` / `_private` |
+| 泛型参数 | 语义化短名 | `TData`, `TResponse`, `TError` |
+
+### 格式规范
+
+- **缩进**：2 空格，禁止 Tab
+- **引号**：单引号 `'`（Prettier 默认），JSX 属性用双引号
+- **分号**：每行末尾必须加分号
+- **行长度**：≤ 100 字符（Prettier 默认）
+- **尾逗号**：多行结构末尾加逗号（Prettier 默认）
+- **空行**：import 组之间、顶级声明之间空行分隔
+
+### 类型系统
+
+- **interface vs type**：优先 `interface`（可合并声明），联合类型/交叉类型用 `type`
+- **strict mode**：确保 `tsconfig.json` 开启 `strict: true`
+- **unknown over any**：类型不确定时用 `unknown`，禁止使用 `any`
+- **减少类型断言**：避免滥用 `as`，优先用类型守卫 `is` 或类型收窄
+- **import type**：类型引用用 `import type { ... }`，避免运行时残留
+- **readonly**：不变属性加 `readonly`，数组用 `readonly T[]` 或 `ReadonlyArray<T>`
+- **枚举**：优先 `const enum` 或联合类型（`type Status = 'active' | 'inactive'`），减少运行时开销
+- **函数重载**：优先联合类型参数或泛型，必要时才用重载签名
+
+### 文件组织
+
+- **单文件单导出**：每个文件只导出一个主要实体（类/组件/函数）
+- **命名导出**：优先 named export，减少 `export default`
+- **目录结构**：按功能/模块组织，`index.ts` 做统一导出
+- **测试文件**：`*.test.ts` 或 `*.spec.ts`，与源码同目录
+
+### 代码风格
+
+- **解构赋值**：优先对象解构取属性
+- **可选链**：`obj?.prop` 替代 `obj && obj.prop`
+- **空值合并**：`??` 替代 `||` 做默认值（避免 falsy 陷阱）
+- **箭头函数**：优先箭头函数表达式，避免 `function` 关键字（顶层/export 除外）
+- **async/await**：优先 async/await 替代原生 Promise 链式调用
+- **模板字符串**：字符串拼接用 `${}` 模板字符串
+
+## 注释规范
 
 ### 注释示例
 

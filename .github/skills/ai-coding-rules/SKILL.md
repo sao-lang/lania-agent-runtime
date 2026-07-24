@@ -29,17 +29,17 @@ user-invocable: true
 
 - **通用开发约束**，必须加载：`rules/00-base.instructions.md`
 - **TypeScript / TSX**：`rules/01-typescript.instructions.md`
-- **代码重构**：`rules/02-refactor.instructions.md`
 - **测试相关任务**：`rules/03-testing.instructions.md`
-- **Git / 变更管理**：`rules/04-git.instructions.md`
 - **Graphify / 架构关系分析**：`rules/05-graphify.instructions.md`
-- **文档更新**：`rules/06-doc.instructions.md`
 - **发布 / changelog**：`rules/07-release.instructions.md`
 - **Dart**：`rules/08-dart.instructions.md`
 - **Rust**：`rules/09-rust.instructions.md`
 - **Python**：`rules/10-python.instructions.md`
 - **Go**：`rules/11-go.instructions.md`
-- **调试问题**：`rules/12-debug.instructions.md`，同时需加载 `debug-tools` skill（`../debug-tools/SKILL.md`）
+- **代码重构** → 加载 `refactor-rules` skill（`../refactor-rules/SKILL.md`）
+- **Git / 提交管理** → 加载 `commit-rules` skill（`../commit-rules/SKILL.md`）
+- **文档更新** → 加载 `doc-rules` skill（`../doc-rules/SKILL.md`）
+- **调试问题** → 加载 `debug-principles` skill（`../debug-principles/SKILL.md`），同时需加载 `debug-tools` skill（`../debug-tools/SKILL.md`）
 
 ## 使用原则
 
@@ -55,8 +55,9 @@ user-invocable: true
 - 如果用户描述模糊，通过项目文件结构推断语言和框架，不确定时询问用户
 
 ### 第二步：加载规则文件
-- 根据任务类型加载对应的规则文件（参考上方"何时加载什么规则文件"）
+- 根据任务类型加载对应的规则文件或 skill（参考上方"何时加载什么规则文件"）
 - 始终加载 `rules/00-base.instructions.md`
+- 如果是重构/Git/文档/调试任务，对应加载 `refactor-rules` / `commit-rules` / `doc-rules` / `debug-principles` skill
 - 如果是调试任务，额外加载 `../debug-tools/SKILL.md`
 
 ### 第三步：解析设计文档 → 输出方案（R8）
@@ -118,5 +119,5 @@ user-invocable: true
 ### 第七步：记录与提交
 - **README 同步**：按 R9b 检查是否需要同步更新 `README.md` 和 `docs/` 下的相关设计文档
 - **追加记录**：按 R9a 要求追加一条记录到 `overview.md`（时间倒序）。注意：多次迭代修改（如修复 → 验证失败 → 再修复）只在**最终完成时追加一条**，不逐次追加
-- **提交信息**：按 `rules/04-git.instructions.md` 执行提交。提交信息格式概要：`<type>: <简短描述>`（如 `feat: 实现 ToolDispatcher 统一调度`、`fix: 修复 MCP 连接超时问题`、`refactor: 重构 StepRunner 接口`）
+- **提交信息**：按 `commit-rules` skill 执行提交。提交信息格式概要：`<type>: <简短描述>`（如 `feat: 实现 ToolDispatcher 统一调度`、`fix: 修复 MCP 连接超时问题`、`refactor: 重构 StepRunner 接口`）
 

@@ -19,6 +19,31 @@ applyTo: '**/*'
 ## 1. 依赖检查
 
 ```powershell
+# ── Python 项目（uv） ──
+# 查看依赖树
+uv pip tree
+
+# 查看已安装包列表
+uv pip list
+
+# 检查过时的包
+uv pip list --outdated
+
+# 检查依赖冲突
+uv pip check
+
+# ── Python 项目（pip） ──
+# 查看依赖树（需要安装 pipdeptree）
+pip install pipdeptree
+pipdeptree
+
+# 检查过时的包
+pip list --outdated
+
+# 检查依赖冲突
+pip check
+
+# ── Node.js 项目（pnpm） ──
 # 查看依赖树
 pnpm ls --depth=3
 

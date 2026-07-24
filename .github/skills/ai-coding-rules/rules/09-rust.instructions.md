@@ -13,13 +13,73 @@ applyTo: '**/*.rs'
 - 常用 trait 用 `#[derive(Debug, Clone, PartialEq)]` 而非手写
 - 模块按文件组织，每个文件一个核心类型，`mod.rs` 只做重导出
 
-## 注释规范
+## 风格规范（Rust API Guidelines + Rust Style Guide）
 
-- 公开 API 使用 `///` 文档注释（可生成 rustdoc）
-- 结构体字段必须加 `///` 文档注释
-- 复杂函数需在函数上方写文档注释说明用途、参数和返回值
-- 使用 `// SAFETY:` 标注 unsafe 代码块的 safety 前提
-- 修改代码不得删除已有注释，逻辑变化时追加说明
+### 命名规范
+
+| 类型 | 风格 | 示例 |
+|------|------|------|
+| 变量/函数/方法 | `snake_case` | `user_name`, `get_user()` |
+| 类型/结构体/trait/enum | `PascalCase` | `UserService`, `Display` |
+| 常量/静态变量 | `UPPER_SNAKE_CASE` | `MAX_RETRY_COUNT` |
+| 文件/目录 | `snake_case` | `auth_service.rs` |
+| 模块名 | `snake_case` | `mod auth_service` |
+| 枚举变体 | `PascalCase` | `Status::Active` |
+| 泛型参数 | 单大写字母 | `T`, `E`, `K`, `V` |
+| 生命周期 | 单引号 + 短名 | `'a`, `'_` |
+| 构造器/转换器 | `from_`, `to_`, `as_`, `into_` | `from_str()`, `into_inner()` |
+| getter | 去掉 `get_` 前缀 | `.name()` 而非 `.get_name()` |
+| 错误类型 | 后缀 `Error` | `ParseError`, `AuthError` |
+| trait 标记 | 后缀 `able` / `ing` | `Cloneable`, `Serializing` |
+
+### 格式规范
+
+- **缩进**：4 空格，禁止 Tab
+- **行长度**：≤ 100 字符（rustfmt 默认）
+- **花括号**：左花括号与表达式同行（same-line），右花括号单独一行
+- **空行**：函数/item 之间 1 空行，`impl` 块内方法按逻辑分组
+- **import 组织**：标准库 → 外部 crate → 本地模块，每组空行分隔
+- **import 合并**：`use std::collections::{HashMap, HashSet}`
+
+### 类型系统
+
+- **Result 优先**：返回 `Result<T, E>` 而非 `Option<T>`（除非逻辑上确实"可能没有"）
+- **自定义错误**：实现 `std::error::Error` + `Display`，用 `thiserror` crate 简化
+- **newtype 模式**：用单字段元组结构体包装原始类型，利用类型系统防止混淆
+- **Builder 模式**：超过 3 个参数的构造器用 Builder 模式
+- **trait 约束**：用 `where` 子句提升可读性，尤其泛型参数多时
+- **derive**：常用 trait 用 `#[derive(Debug, Clone, PartialEq)]`，避免手写
+- **Copy vs Clone**：仅当类型大小 ≤ 指针宽度时才实现 `Copy`
+
+### 模块与文件组织
+
+- **模块结构**：每个模块一个目录，`mod.rs` 只做重导出，逻辑在子文件中
+- **可见性**：最小化 `pub`——crate 内部用 `pub(crate)`，对外 API 才用 `pub`
+- **re-export**：通过 `pub use` 暴露公共 API 路径，隐藏内部模块层次
+- **cfg 条件**：平台特定代码用 `#[cfg(target_os = "...")]`，不要写死平台分支
+
+### 错误处理模式
+
+| 模式 | 推荐度 | 说明 |
+|------|--------|------|
+| `Result<T, E>` | ⭐ 首选 | 可恢复错误的标准方式 |
+| `Option<T>` | ⭐ 常用 | 空值/不存在的情况 |
+| `panic!` / `unwrap()` | ❌ 避免 | 仅示例/测试/prototype 可用 |
+| `expect("msg")` | ⚠️ 慎用 | 仅当 panic 确实不可能发生 |
+| `.unwrap_or_default()` | ✅ 推荐 | 提供合理默认值 |
+| `anyhow::Result` | ✅ 应用层 | 二进制/应用代码使用 |
+| `thiserror::Error` | ✅ 库层 | 库代码定义错误类型 |
+
+### 代码风格
+
+- **模式匹配**：用 `match` 穷尽处理枚举，用 `if let` 处理单分支
+- **迭代器链**：优先 `iter()` → `.filter()` → `.map()` → `.collect()` 链，而非 for 循环
+- **? 操作符**：优先 `?` 传播错误，而非手动 `match`
+- **懒初始化**：用 `LazyLock` / `OnceLock`（取代 `lazy_static!` / `once_cell`）
+- **字符串**：用 `&str` 作参数，`String` 作所有权值
+- **借用规则**：优先 `&T` 引用，需要修改用 `&mut T`，避免 `Rc<RefCell<T>>`
+
+## 注释规范
 
 ### 注释示例
 

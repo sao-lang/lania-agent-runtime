@@ -43,6 +43,7 @@ class RuntimeBuilder:
         self._tool_registry: ToolRegistry | None = None
         self._mcp_manager: MCPServerManager | None = None
         self._skill_manager: SkillManager | None = None
+        self._memory_service: Any | None = None
 
     def system_prompt(self, prompt: str) -> RuntimeBuilder:
         """
@@ -138,20 +139,21 @@ class RuntimeBuilder:
         self._skill_manager = manager
         return self
 
-    def memory(self, backend: str = "sqlite", **kwargs: Any) -> RuntimeBuilder:
+    def memory(self, service: Any | None = None) -> RuntimeBuilder:
         """
-        配置记忆系统。
+        注入记忆系统。
+
+        传入已组装好的 MemoryService 实例，Runtime 将自动注册
+        after_step Transform 将对话写入持久化记忆。
 
         Args:
-            backend: 记忆后端类型。
-            kwargs: 记忆系统配置。
+            service: MemoryService 实例。由用户自行创建并注入，
+                     支持任意 MemoryPersistence 后端（SQLite / Redis 等）。
 
         Returns:
             self（链式调用）。
         """
-        self._services.setdefault("memory_config", {})
-        self._services["memory_config"]["backend"] = backend
-        self._services["memory_config"].update(kwargs)
+        self._memory_service = service
         return self
 
     def loop(self, strategy: str = "", **kwargs: Any) -> RuntimeBuilder:
@@ -280,6 +282,7 @@ class RuntimeBuilder:
             tools=self._tool_registry,
             mcp=self._mcp_manager,
             skills=self._skill_manager,
+            memory_service=self._memory_service,
         )
 
         # 插件在 build() 时不自动注册（需要 async 上下文），

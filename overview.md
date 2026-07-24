@@ -1,5 +1,53 @@
 ### 2026-07-24
 
+#### 6. 集成上下文与记忆系统（Context + Memory 原语）
+
+- **时间：** 2026-07-24
+- **发起人：** user
+- **修改文件：**
+  - `src/context/__init__.py` — 上下文模块入口
+  - `src/context/_budget.py` — TokenManager / BudgetController（令牌预算控制）
+  - `src/context/_compressor.py` — Compressor（上下文压缩，三级压缩策略）
+  - `src/context/_config.py` — ContextConfig（上下文配置）
+  - `src/context/_manager.py` — ContextManager（五阶段上下文编排）
+  - `src/context/_models.py` — 上下文数据模型（SelectionDecision / RawContext 等）
+  - `src/context/_selector.py` — Selector（上下文选择器）
+  - `src/context/context_hooks/_assembler_hook.py` — ContextAssemblerHook（before_llm Transform 组装上下文）
+  - `src/memory/__init__.py` — 记忆模块入口
+  - `src/memory/_types.py` — 记忆核心类型（StepContext / GateDecision / RecallResult 等 15+ 类型）
+  - `src/memory/_persistence.py` — MemoryPersistence 抽象基类
+  - `src/memory/_service.py` — MemoryService（记忆服务编排）
+  - `src/memory/_backends/_sqlite.py` — SQLitePersistence（记忆持久化 SQLite 实现）
+  - `src/memory/_hooks/_commit.py` — MemoryCommitHook（after_step Transform 写入持久化记忆）
+  - `src/memory/_management/_compressor.py` — CompressionManager（记忆压缩管理）
+  - `src/memory/_management/_conflict.py` — ConflictResolver（记忆冲突解决）
+  - `src/memory/_management/_eviction.py` — EvictionManager（记忆淘汰策略）
+  - `src/memory/_management/_gate.py` — MemoryCommitGate（记忆提交门控）
+  - `src/memory/_stores/_entity.py` — EntityMemoryStore（实体记忆）
+  - `src/memory/_stores/_episodic.py` — EpisodicMemoryStore（情景记忆）
+  - `src/memory/_stores/_pattern.py` — BehavioralPatternStore（行为模式）
+  - `src/memory/_stores/_semantic.py` — SemanticKnowledgeStore（语义知识）
+  - `src/memory/_stores/_working.py` — WorkingMemoryStore（工作记忆）
+  - `src/runtime/_builder.py` — 重构 memory() 方法，接受 MemoryService 实例注入
+  - `src/runtime/_runtime.py` — 集成 ContextManager / ContextAssemblerHook / MemoryCommitHook；_execute_step 支持组装消息
+  - `tests/test_context_budget.py` — 上下文预算测试
+  - `tests/test_context_compressor.py` — 上下文压缩测试
+  - `tests/test_context_manager.py` — 上下文管理测试
+  - `tests/test_context_selector.py` — 上下文选择器测试
+  - `tests/test_memory_management.py` — 记忆管理测试
+  - `tests/test_memory_persistence.py` — 记忆持久化测试
+  - `tests/test_memory_service.py` — 记忆服务测试
+  - `tests/test_memory_stores.py` — 记忆存储测试
+  - `tests/test_builder.py` — 更新 memory 测试用例
+  - `.github/skills/commit-rules/` — Git 提交规范技能
+  - `.github/skills/debug-principles/` — 调试原则技能
+  - `.github/skills/doc-rules/` — 文档规则技能
+  - `.github/skills/grill-me/` — Socratic 拷问技能
+  - `.github/skills/refactor-rules/` — 重构规则技能
+- **修改内容：** 实现 Context 和 Memory 原语。Context 模块提供 Token 预算控制（BudgetController）、三级上下文压缩（Compressor）、智能上下文选择（Selector）和五阶段上下文编排（ContextManager），通过 ContextAssemblerHook 在 before_llm 阶段自动组装上下文。Memory 模块提供 5 种记忆存储（实体/情景/行为模式/语义知识/工作记忆）、SQLite 持久化后端、记忆管理流水线（压缩/冲突解决/淘汰/提交门控），通过 MemoryCommitHook 在 after_step 阶段自动写入持久化记忆。重构 RuntimeBuilder.memory() 为接受 MemoryService 实例注入。新增 5 个独立技能文件。重写了 Runtime._execute_step 以支持 ContextAssemblerHook 组装的 messages。
+- **复盘结果：** 全部测试通过，ruff lint 零报错。
+- **潜在风险：** 无。向后兼容：旧接口保留，memory_service/context_manager 为可选参数。
+
 #### 5. 实现 MCP + Skill 原语（完整集成与集成测试）
 
 - **时间：** 2026-07-24
