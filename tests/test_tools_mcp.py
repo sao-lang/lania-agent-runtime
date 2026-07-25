@@ -310,6 +310,7 @@ class TestMCPClient:
         client._reader = AsyncMock()  # 确保 reader 不为 None
 
         async def mock_wait_for(coro, timeout):
+            coro.close()  # 清理未 await 的协程，避免 RuntimeWarning
             raise asyncio.TimeoutError
 
         with patch("asyncio.wait_for", mock_wait_for):
