@@ -66,9 +66,7 @@ class ToolDispatcher:
         Returns:
             所有可用工具的 ToolSpec 列表。
         """
-        local_tools = self._tools.list_specs()
-        mcp_tools = self._mcp.get_all_tools()
-        return local_tools + mcp_tools
+        return self._tools.list_specs() + self._mcp.get_all_tools()
 
     async def dispatch(self, ctx: "RuntimeContext") -> Any:
         """

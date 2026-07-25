@@ -8,6 +8,11 @@ Hook 模块。
   - ReplanHook
 """
 
+from src.runtime._types import (
+    Interceptor,
+    Observer,
+    Transformer,
+)
 from src.runtime.hooks._approval_hook import (
     ApprovalPolicy,
     BudgetThresholdPolicy,
@@ -19,11 +24,6 @@ from src.runtime.hooks._approval_hook import (
 from src.runtime.hooks._critique_hook import (
     DualModelCritiqueHook,
     SelfCritiqueHook,
-)
-from src.runtime.hooks._primitives import (
-    Interceptor,
-    Observer,
-    Transformer,
 )
 from src.runtime.hooks._registry import HandlerInfo, HookRegistry
 from src.runtime.hooks._replan_hook import ReplanHook
