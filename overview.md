@@ -1,3 +1,29 @@
+### 2026-07-25
+
+#### 1. 新增 code-review 和 simplify 两个 skill
+
+- **时间：** 2026-07-25 10:00
+- **发起人：** user
+- **修改文件：**
+  - `.github/skills/code-review/SKILL.md` — 新建 code-review skill
+  - `.github/skills/simplify/SKILL.md` — 新建 simplify skill
+  - `.github/copilot-instructions.md` — 注册两个新 skill 的加载要求
+- **修改内容：** 新增 code-review（系统化代码审查，7 维度：正确性/安全/性能/可读性/可维护性/项目约定/文档测试）和 simplify（代码简化，7 维度：死代码删除/重复消除/扁平化/逻辑简化/数据结构简化/流程简化/API 简化）两个 skill，并更新 copilot-instructions.md 注册其加载条件。
+- **复盘结果：** N/A（纯新增 skill 文件，不涉及代码修改）
+- **潜在风险：** 无
+
+#### 2. 优化 code-review 和 simplify skill
+
+- **时间：** 2026-07-25 10:30
+- **发起人：** user
+- **修改文件：**
+  - `.github/skills/code-review/SKILL.md` — 添加反模式速查表 + 语言专项审查重点（Python/TS/异步）
+  - `.github/skills/simplify/SKILL.md` — 优化速查表（去除冗余，补充 walrus/context manager/match-case/dataclass 模式）
+  - `.github/copilot-instructions.md` — 修复调试任务过时引用（"见下文第 3 条"→ 精确路径）
+- **修改内容：** code-review 新增 15 种常见代码反模式速查表 + Python/TypeScript/异步并发三组语言专项审查重点；simplify 优化速查表替换冗余项、补充 walrus 运算符/上下文管理器/match-case/dataclass 化简等 Python 常用简化模式；修复 copilot-instructions.md 中 debug-tools 引用指向已不存在的"第 3 条"。
+- **复盘结果：** 无代码修改，无回归风险
+- **潜在风险：** 无
+
 ### 2026-07-24
 
 #### 10. 第十轮自省：修复 except 块缺失 exc_info

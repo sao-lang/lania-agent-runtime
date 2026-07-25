@@ -23,7 +23,7 @@ $SharedRoot = "E:\vsc-workspace\lania-shared-skills"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $TargetDir = Join-Path $ProjectRoot ".github\skills"
 
-$Skills = @("ai-coding-rules", "debug-tools")
+$Skills = @("ai-coding-rules", "grill-me", "code-review", "simplify")
 
 # ── 辅助函数 ──
 
@@ -38,6 +38,9 @@ function Remove-SkipWorktree($ProjectRoot) {
     if ($files) {
         $files | ForEach-Object { git -C $ProjectRoot update-index --no-skip-worktree $_ 2>$null }
     }
+    # 也处理 copilot-instructions.md
+    $md = git -C $ProjectRoot ls-files .github/copilot-instructions.md 2>$null
+    if ($md) { git -C $ProjectRoot update-index --no-skip-worktree $md 2>$null }
 }
 
 function Set-SkipWorktree($ProjectRoot) {
@@ -45,11 +48,14 @@ function Set-SkipWorktree($ProjectRoot) {
     if ($files) {
         $files | ForEach-Object { git -C $ProjectRoot update-index --skip-worktree $_ 2>$null }
     }
+    # 也处理 copilot-instructions.md
+    $md = git -C $ProjectRoot ls-files .github/copilot-instructions.md 2>$null
+    if ($md) { git -C $ProjectRoot update-index --skip-worktree $md 2>$null }
 }
 
 function Copy-SharedToProject {
     Write-Host "🔄 复制真实文件到项目 ..." -ForegroundColor Cyan
-    @("ai-coding-rules", "debug-tools") | ForEach-Object {
+    $Skills | ForEach-Object {
         $src = Join-Path $SharedRoot $_
         $dst = Join-Path $TargetDir $_
         if (Test-Path $src) {
@@ -59,6 +65,13 @@ function Copy-SharedToProject {
             Copy-Item -Path $src -Destination $dst -Recurse -Force
             Write-Host "   ✅ $_" -ForegroundColor Green
         }
+    }
+    # 复制 copilot-instructions.md
+    $mdSrc = Join-Path $SharedRoot "copilot-instructions.md"
+    $mdDst = Join-Path $ProjectRoot ".github\copilot-instructions.md"
+    if (Test-Path $mdSrc) {
+        Copy-Item -Path $mdSrc -Destination $mdDst -Force
+        Write-Host "   ✅ copilot-instructions.md" -ForegroundColor Green
     }
 }
 
@@ -72,11 +85,20 @@ if (-not (Test-Path $SharedRoot)) {
 if ($ToReal) {
     # 移除 junction → 复制真实文件 → 清除 skip-worktree
     Write-Host "🔁 切换为真实文件模式（供 Git 提交）..." -ForegroundColor Yellow
-    @("ai-coding-rules", "debug-tools") | ForEach-Object {
+    $Skills | ForEach-Object {
         $p = Join-Path $TargetDir $_
         if ((Test-Path $p) -and (Test-IsJunction $p)) {
             cmd /c "rmdir /s /q $p" 2>$null
             Write-Host "   🗑️  移除 junction: $_" -ForegroundColor Gray
+        }
+    }
+    # 处理 copilot-instructions.md symlink
+    $mdLink = Join-Path $ProjectRoot ".github\copilot-instructions.md"
+    if (Test-Path $mdLink) {
+        $item = Get-Item $mdLink -Force
+        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            Remove-Item $mdLink -Force
+            Write-Host "   🗑️  移除 copilot-instructions.md symlink" -ForegroundColor Gray
         }
     }
     Copy-SharedToProject
@@ -84,9 +106,9 @@ if ($ToReal) {
     Write-Host "✅ 已切换为真实文件，Git 可感知改动。提交完成后请运行 sync-skills.ps1 -ToJunction 恢复。" -ForegroundColor Green
 }
 elseif ($ToJunction) {
-    # 移除真实文件 → 创建 junction → 设置 skip-worktree
+    # 移除真实文件 → 创建 junction/symlink → 设置 skip-worktree
     Write-Host "🔁 切换为 junction 模式（实时同步）..." -ForegroundColor Yellow
-    @("ai-coding-rules", "debug-tools") | ForEach-Object {
+    $Skills | ForEach-Object {
         $p = Join-Path $TargetDir $_
         if (Test-Path $p) {
             if (Test-IsJunction $p) {
@@ -98,6 +120,22 @@ elseif ($ToJunction) {
         $src = Join-Path $SharedRoot $_
         cmd /c "mklink /J `"$p`" `"$src`"" 2>$null
         Write-Host "   🔗 创建 junction: $_" -ForegroundColor Gray
+    }
+    # 处理 copilot-instructions.md symlink
+    $mdLink = Join-Path $ProjectRoot ".github\copilot-instructions.md"
+    $mdSrc = Join-Path $SharedRoot "copilot-instructions.md"
+    if (Test-Path $mdLink) {
+        $item = Get-Item $mdLink -Force
+        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            Write-Host "   ⏭️  已是 symlink: copilot-instructions.md" -ForegroundColor Gray
+        } else {
+            Remove-Item $mdLink -Force
+            cmd /c "mklink `"$mdLink`" `"$mdSrc`"" 2>$null
+            Write-Host "   🔗 创建 symlink: copilot-instructions.md" -ForegroundColor Gray
+        }
+    } else {
+        cmd /c "mklink `"$mdLink`" `"$mdSrc`"" 2>$null
+        Write-Host "   🔗 创建 symlink: copilot-instructions.md" -ForegroundColor Gray
     }
     Set-SkipWorktree $ProjectRoot
     Write-Host "✅ 已切换为 junction，实时同步共享目录更改，Git 已忽略该目录。" -ForegroundColor Green
