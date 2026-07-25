@@ -1,3 +1,0 @@
-#!/bin/sh
-# Hook disabled - skills shared-sync removed
-exit 0
