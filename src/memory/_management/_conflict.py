@@ -76,8 +76,7 @@ class ConflictResolver:
         # 策略 1: 置信度加权
         if new_confidence >= old.confidence * self.OVERRIDE_RATIO:
             return True, (
-                f"新置信度 {new_confidence} > "
-                f"旧 {old.confidence} × {self.OVERRIDE_RATIO}"
+                f"新置信度 {new_confidence} > 旧 {old.confidence} × {self.OVERRIDE_RATIO}"
             )
 
         # 策略 2: 时间衰减
@@ -92,7 +91,4 @@ class ConflictResolver:
             if days_since_old > self.STALE_DAYS and new_confidence > self.STALE_MIN_CONFIDENCE:
                 return True, f"旧值已过 {days_since_old} 天，新值置信度可接受"
 
-        return False, (
-            f"新置信度 {new_confidence} "
-            f"不足以覆盖旧 {old.confidence}"
-        )
+        return False, (f"新置信度 {new_confidence} 不足以覆盖旧 {old.confidence}")

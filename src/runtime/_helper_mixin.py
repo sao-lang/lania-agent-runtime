@@ -16,6 +16,7 @@ from src.runtime._types import (
     HookPoint,
     PauseAction,
     RunResult,
+    RuntimeStatus,
     SessionSnapshot,
     ToolCallInfo,
 )
@@ -100,7 +101,7 @@ class RuntimeHelperMixin:
                 "context": pause_action.context,
             }
         )
-        self.status = "paused"
+        self.status = RuntimeStatus.PAUSED
 
     def _register_default_strategies(self) -> None:
         """
@@ -294,7 +295,7 @@ class RuntimeHelperMixin:
 
         适用于外部循环控制场景。
         """
-        if self.status != "running":
+        if self.status != RuntimeStatus.RUNNING:
             return
 
         # before_step hooks
@@ -305,18 +306,18 @@ class RuntimeHelperMixin:
 
         # 取消检查
         if self._cancelled:
-            self.status = "ended"
+            self.status = RuntimeStatus.ENDED
             return
 
         # 超时检查
         if self._timeout["remaining_ms"] <= 0:
-            self.status = "error"
+            self.status = RuntimeStatus.ERROR
             return
 
         # before_step interceptor
         intercept_result = await self._hooks.run_interceptors(HookPoint.BEFORE_STEP, {}, ctx)
         if isinstance(intercept_result, BlockAction):
-            self.status = "error"
+            self.status = RuntimeStatus.ERROR
             return
 
         # before_step transformers
@@ -326,7 +327,7 @@ class RuntimeHelperMixin:
         next_step = await self._get_next_step(ctx)
 
         if next_step == "end":
-            self.status = "ended"
+            self.status = RuntimeStatus.ENDED
             return
 
         await self._execute_step(next_step, ctx)
@@ -342,7 +343,7 @@ class RuntimeHelperMixin:
         Args:
             approval_id: 审批请求 ID。
         """
-        if self.status != "paused":
+        if self.status != RuntimeStatus.PAUSED:
             return
 
         # 验证 approval_id
@@ -351,7 +352,7 @@ class RuntimeHelperMixin:
 
         if not self._pause_state["pending_approvals"]:
             self._pause_state["is_paused"] = False
-            self.status = "running"
+            self.status = RuntimeStatus.RUNNING
 
             # session_resume hooks
             ctx = self._build_context()
@@ -370,7 +371,7 @@ class RuntimeHelperMixin:
         请直接取消对应的 asyncio.Task。
         """
         self._cancelled = True
-        self.status = "cancelled"
+        self.status = RuntimeStatus.CANCELLED
 
     async def destroy(self) -> None:
         """
@@ -379,7 +380,7 @@ class RuntimeHelperMixin:
         触发 session_end hooks（评估、审计、清理）。
         销毁后 Runtime 不可继续使用。
         """
-        self.status = "ended"
+        self.status = RuntimeStatus.ENDED
         ctx = self._build_context()
         await self._hooks.run_observers(
             HookPoint.SESSION_END,
@@ -404,7 +405,7 @@ class RuntimeHelperMixin:
             step_count=self._budget.step_count,
             message_count=len(self._messages),
             total_tokens=self._budget.token_used,
-            last_error=str(self._error_state["last_error"]) if self._error_state[
-                "last_error"
-            ] else None,
+            last_error=str(self._error_state["last_error"])
+            if self._error_state["last_error"]
+            else None,
         )

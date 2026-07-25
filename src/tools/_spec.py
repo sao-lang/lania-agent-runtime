@@ -52,9 +52,7 @@ class ToolSpec:
     def __post_init__(self) -> None:
         """初始化后校验 name 格式。"""
         if not self.name or not re.match(r"^[a-zA-Z0-9_-]+$", self.name):
-            raise ValueError(
-                f"Tool name '{self.name}' 格式无效：须匹配 ^[a-zA-Z0-9_-]+$，不能为空"
-            )
+            raise ValueError(f"Tool name '{self.name}' 格式无效：须匹配 ^[a-zA-Z0-9_-]+$，不能为空")
 
     def to_openai_schema(self) -> dict:
         """

@@ -181,12 +181,14 @@ class TestSkillManager:
     @pytest.mark.asyncio
     async def test_list_skills(self) -> None:
         manager = SkillManager()
-        manager.add_skill(SkillEntry(
-            name="pr",
-            path="/tmp/pr",
-            content="x" * 100,
-            config=SkillConfig(description="PR review", keywords=["pr"]),
-        ))
+        manager.add_skill(
+            SkillEntry(
+                name="pr",
+                path="/tmp/pr",
+                content="x" * 100,
+                config=SkillConfig(description="PR review", keywords=["pr"]),
+            )
+        )
         info = manager.list_skills()
         assert len(info) == 1
         assert info[0]["name"] == "pr"
@@ -242,23 +244,23 @@ class TestSkillManager:
     @pytest.mark.asyncio
     async def test_hook_match_injects_knowledge(self) -> None:
         manager = SkillManager()
-        manager.add_skill(SkillEntry(
-            name="pr-analysis",
-            path="/tmp/pr",
-            content="# PR Analysis\n\nReview code carefully.",
-            config=SkillConfig(
+        manager.add_skill(
+            SkillEntry(
                 name="pr-analysis",
-                keywords=["pr", "review", "pull request"],
-                priority=5,
-            ),
-        ))
+                path="/tmp/pr",
+                content="# PR Analysis\n\nReview code carefully.",
+                config=SkillConfig(
+                    name="pr-analysis",
+                    keywords=["pr", "review", "pull request"],
+                    priority=5,
+                ),
+            )
+        )
 
         hook = manager.get_before_llm_hook()
         payload = ContextPayload(system_prompt="test")
         ctx = RuntimeContext(
-            messages=(
-                {"role": "user", "content": "Please review this PR"},
-            ),
+            messages=({"role": "user", "content": "Please review this PR"},),
         )
         result = await hook(payload, ctx)
         assert len(result.injected_context) == 1
@@ -269,22 +271,22 @@ class TestSkillManager:
     @pytest.mark.asyncio
     async def test_hook_no_match_does_not_inject(self) -> None:
         manager = SkillManager()
-        manager.add_skill(SkillEntry(
-            name="pr-analysis",
-            path="/tmp/pr",
-            content="# PR Analysis",
-            config=SkillConfig(
-                keywords=["pr", "review"],
-                priority=5,
-            ),
-        ))
+        manager.add_skill(
+            SkillEntry(
+                name="pr-analysis",
+                path="/tmp/pr",
+                content="# PR Analysis",
+                config=SkillConfig(
+                    keywords=["pr", "review"],
+                    priority=5,
+                ),
+            )
+        )
 
         hook = manager.get_before_llm_hook()
         payload = ContextPayload(system_prompt="test")
         ctx = RuntimeContext(
-            messages=(
-                {"role": "user", "content": "What is the weather today?"},
-            ),
+            messages=({"role": "user", "content": "What is the weather today?"},),
         )
         result = await hook(payload, ctx)
         assert result.injected_context == []
@@ -293,21 +295,21 @@ class TestSkillManager:
     async def test_hook_auto_inject(self) -> None:
         """auto_inject=True 的 Skill 应始终注入。"""
         manager = SkillManager()
-        manager.add_skill(SkillEntry(
-            name="system-skill",
-            path="/tmp/system",
-            content="# System Knowledge",
-            config=SkillConfig(
-                auto_inject=True,
-            ),
-        ))
+        manager.add_skill(
+            SkillEntry(
+                name="system-skill",
+                path="/tmp/system",
+                content="# System Knowledge",
+                config=SkillConfig(
+                    auto_inject=True,
+                ),
+            )
+        )
 
         hook = manager.get_before_llm_hook()
         payload = ContextPayload(system_prompt="test")
         ctx = RuntimeContext(
-            messages=(
-                {"role": "user", "content": "anything"},
-            ),
+            messages=({"role": "user", "content": "anything"},),
         )
         result = await hook(payload, ctx)
         assert len(result.injected_context) == 1
@@ -317,12 +319,14 @@ class TestSkillManager:
     async def test_hook_auto_inject_no_user_msg(self) -> None:
         """没有 user message 时，auto_inject 仍然注入。"""
         manager = SkillManager()
-        manager.add_skill(SkillEntry(
-            name="auto-skill",
-            path="/tmp/auto",
-            content="# Auto",
-            config=SkillConfig(auto_inject=True),
-        ))
+        manager.add_skill(
+            SkillEntry(
+                name="auto-skill",
+                path="/tmp/auto",
+                content="# Auto",
+                config=SkillConfig(auto_inject=True),
+            )
+        )
 
         hook = manager.get_before_llm_hook()
         payload = ContextPayload(system_prompt="test")
@@ -334,25 +338,27 @@ class TestSkillManager:
     async def test_hook_multiple_skills(self) -> None:
         """多个 Skill 同时匹配时，全部注入。"""
         manager = SkillManager()
-        manager.add_skill(SkillEntry(
-            name="pr",
-            path="/tmp/pr",
-            content="# PR",
-            config=SkillConfig(keywords=["pr", "review"], priority=5),
-        ))
-        manager.add_skill(SkillEntry(
-            name="sql",
-            path="/tmp/sql",
-            content="# SQL",
-            config=SkillConfig(keywords=["sql", "query"], priority=5),
-        ))
+        manager.add_skill(
+            SkillEntry(
+                name="pr",
+                path="/tmp/pr",
+                content="# PR",
+                config=SkillConfig(keywords=["pr", "review"], priority=5),
+            )
+        )
+        manager.add_skill(
+            SkillEntry(
+                name="sql",
+                path="/tmp/sql",
+                content="# SQL",
+                config=SkillConfig(keywords=["sql", "query"], priority=5),
+            )
+        )
 
         hook = manager.get_before_llm_hook()
         payload = ContextPayload(system_prompt="test")
         ctx = RuntimeContext(
-            messages=(
-                {"role": "user", "content": "Review this PR and write a SQL query"},
-            ),
+            messages=({"role": "user", "content": "Review this PR and write a SQL query"},),
         )
         result = await hook(payload, ctx)
         assert len(result.injected_context) == 2
@@ -361,16 +367,18 @@ class TestSkillManager:
     async def test_hook_with_description_in_header(self) -> None:
         """description 应出现在注入内容的 header 中。"""
         manager = SkillManager()
-        manager.add_skill(SkillEntry(
-            name="pr",
-            path="/tmp/pr",
-            content="# PR Knowledge",
-            config=SkillConfig(
-                description="Expert PR review",
-                keywords=["pr"],
-                priority=5,
-            ),
-        ))
+        manager.add_skill(
+            SkillEntry(
+                name="pr",
+                path="/tmp/pr",
+                content="# PR Knowledge",
+                config=SkillConfig(
+                    description="Expert PR review",
+                    keywords=["pr"],
+                    priority=5,
+                ),
+            )
+        )
 
         hook = manager.get_before_llm_hook()
         payload = ContextPayload(system_prompt="test")
@@ -449,12 +457,14 @@ class TestSkillManager:
     async def test_get_last_user_message_empty_content(self) -> None:
         """user 消息 content 为空时仍能处理。"""
         manager = SkillManager()
-        manager.add_skill(SkillEntry(
-            name="auto-skill",
-            path="/tmp/auto",
-            content="# Auto",
-            config=SkillConfig(auto_inject=True),
-        ))
+        manager.add_skill(
+            SkillEntry(
+                name="auto-skill",
+                path="/tmp/auto",
+                content="# Auto",
+                config=SkillConfig(auto_inject=True),
+            )
+        )
         hook = manager.get_before_llm_hook()
         payload = ContextPayload(system_prompt="test")
         ctx = RuntimeContext(
@@ -467,19 +477,19 @@ class TestSkillManager:
     async def test_hook_priority_threshold(self) -> None:
         """score < priority 时不注入。"""
         manager = SkillManager()
-        manager.add_skill(SkillEntry(
-            name="high-bar",
-            path="/tmp/high",
-            content="# High Bar",
-            config=SkillConfig(keywords=["rare"], priority=10),
-        ))
+        manager.add_skill(
+            SkillEntry(
+                name="high-bar",
+                path="/tmp/high",
+                content="# High Bar",
+                config=SkillConfig(keywords=["rare"], priority=10),
+            )
+        )
 
         hook = manager.get_before_llm_hook()
         payload = ContextPayload(system_prompt="test")
         ctx = RuntimeContext(
-            messages=(
-                {"role": "user", "content": "rare keyword present"},
-            ),
+            messages=({"role": "user", "content": "rare keyword present"},),
         )
         result = await hook(payload, ctx)
         # score=5, priority=10 → 不注入

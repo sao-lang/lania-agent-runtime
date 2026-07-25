@@ -35,7 +35,7 @@ class SelfCritiqueHook:
             "2. 是否有事实性错误\n"
             "3. 是否完整（没有遗漏关键信息）\n"
             "4. 语气是否恰当\n"
-            "返回 JSON：{\"score\": 0-10, \"issues\": [], \"suggestions\": []}"
+            '返回 JSON：{"score": 0-10, "issues": [], "suggestions": []}'
         )
 
     async def __call__(self, event: dict, ctx: Any) -> None:
@@ -51,10 +51,12 @@ class SelfCritiqueHook:
             return
 
         # 记录批评元信息到服务的 _critique_results 中
-        ctx.services.setdefault("_critique_results", []).append({
-            "type": "self_critique",
-            "step_index": ctx.step_index,
-        })
+        ctx.services.setdefault("_critique_results", []).append(
+            {
+                "type": "self_critique",
+                "step_index": ctx.step_index,
+            }
+        )
 
 
 class DualModelCritiqueHook:
@@ -102,8 +104,10 @@ class DualModelCritiqueHook:
             return
 
         # 记录批评元信息
-        ctx.services.setdefault("_critique_results", []).append({
-            "type": "dual_critique",
-            "step_index": ctx.step_index,
-            "max_rounds": self._max_rounds,
-        })
+        ctx.services.setdefault("_critique_results", []).append(
+            {
+                "type": "dual_critique",
+                "step_index": ctx.step_index,
+                "max_rounds": self._max_rounds,
+            }
+        )

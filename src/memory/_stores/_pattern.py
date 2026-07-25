@@ -47,17 +47,12 @@ class BehavioralPatternStore(BaseStore[BehavioralPattern]):
             "total_interactions": pattern.total_interactions,
             "version": pattern.version,
             "last_converged_at": (
-                pattern.last_converged_at.isoformat()
-                if pattern.last_converged_at else None
+                pattern.last_converged_at.isoformat() if pattern.last_converged_at else None
             ),
             "last_interaction_at": (
-                pattern.last_interaction_at.isoformat()
-                if pattern.last_interaction_at else None
+                pattern.last_interaction_at.isoformat() if pattern.last_interaction_at else None
             ),
-            "created_at": (
-                pattern.created_at.isoformat()
-                if pattern.created_at else None
-            ),
+            "created_at": (pattern.created_at.isoformat() if pattern.created_at else None),
         }
 
     @staticmethod
@@ -69,15 +64,16 @@ class BehavioralPatternStore(BaseStore[BehavioralPattern]):
             version=raw.get("version", 1),
             last_converged_at=(
                 datetime.fromisoformat(raw["last_converged_at"])
-                if raw.get("last_converged_at") else None
+                if raw.get("last_converged_at")
+                else None
             ),
             last_interaction_at=(
                 datetime.fromisoformat(raw["last_interaction_at"])
-                if raw.get("last_interaction_at") else None
+                if raw.get("last_interaction_at")
+                else None
             ),
             created_at=(
-                datetime.fromisoformat(raw["created_at"])
-                if raw.get("created_at") else None
+                datetime.fromisoformat(raw["created_at"]) if raw.get("created_at") else None
             ),
         )
 

@@ -26,6 +26,9 @@ dev = [
 target-version = "py310"
 line-length = 100
 
+[tool.ruff.format]
+quote-style = "double"
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "N", "ANN"]
 ignore = ["ANN001", "ANN002", "ANN003", "ANN401"]

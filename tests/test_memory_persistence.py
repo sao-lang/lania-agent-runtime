@@ -184,9 +184,7 @@ class TestSQLitePersistenceWithTTL:
         result = await store_with_ttl.get("temp")
         assert result is None
 
-    async def test_ttl_list_keys_excludes_expired(
-        self, store_with_ttl: SQLitePersistence
-    ) -> None:
+    async def test_ttl_list_keys_excludes_expired(self, store_with_ttl: SQLitePersistence) -> None:
         """测试 list_keys 排除已过期的键。"""
         await store_with_ttl.put("ep:sess1:0:a", b"data1")
         await store_with_ttl.put("ep:sess1:1:b", b"data2")
@@ -195,9 +193,7 @@ class TestSQLitePersistenceWithTTL:
         keys = await store_with_ttl.list_keys("ep:")
         assert keys == []
 
-    async def test_ttl_mixed_expiry(
-        self, db_path: str
-    ) -> None:
+    async def test_ttl_mixed_expiry(self, db_path: str) -> None:
         """测试混合 TTL：无 TTL 的键保持，有 TTL 的键过期。"""
         store_no_ttl = SQLitePersistence(db_path)
         store_with_ttl = SQLitePersistence(db_path, default_ttl_seconds=1)

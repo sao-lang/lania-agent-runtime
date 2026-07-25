@@ -17,6 +17,7 @@ from src.runtime._types import (
     BlockAction,
     HookPoint,
     PauseAction,
+    RuntimeStatus,
 )
 from src.runtime.context._serializer import DefaultSerializer, MessageSerializer
 from src.runtime.hooks._registry import HookRegistry
@@ -184,7 +185,7 @@ class StepRunner:
             HookPoint.AFTER_LLM, llm_response, ctx
         )
         if isinstance(intercept_result, BlockAction):
-            controller.status = "error"
+            controller.status = RuntimeStatus.ERROR
             return None
 
         # after_llm observers
@@ -235,7 +236,7 @@ class StepRunner:
         if isinstance(intercept_result, BlockAction):
             error_msg = f"请求被拦截: {intercept_result.reason}"
             controller.messages.append({"role": "assistant", "content": error_msg})
-            controller.status = "error"
+            controller.status = RuntimeStatus.ERROR
             return StepResult(
                 finish_reason=FinishReason.ERROR,
                 status=StepStatus.BLOCKED,
@@ -283,7 +284,7 @@ class StepRunner:
             HookPoint.AFTER_LLM, llm_response, ctx
         )
         if isinstance(intercept_result, BlockAction):
-            controller.status = "error"
+            controller.status = RuntimeStatus.ERROR
             return StepResult(
                 finish_reason=FinishReason.ERROR,
                 status=StepStatus.BLOCKED,

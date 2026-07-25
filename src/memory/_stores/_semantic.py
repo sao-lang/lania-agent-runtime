@@ -77,17 +77,14 @@ class SemanticKnowledgeStore(BaseStore):
             embedding_dim=raw.get("embedding_dim"),
             mention_count=raw.get("mention_count", 0),
             first_seen_at=(
-                datetime.fromisoformat(raw["first_seen_at"])
-                if raw.get("first_seen_at") else None
+                datetime.fromisoformat(raw["first_seen_at"]) if raw.get("first_seen_at") else None
             ),
             last_seen_at=(
-                datetime.fromisoformat(raw["last_seen_at"])
-                if raw.get("last_seen_at") else None
+                datetime.fromisoformat(raw["last_seen_at"]) if raw.get("last_seen_at") else None
             ),
             source=raw.get("source", "extracted_from_dialogue"),
             created_at=(
-                datetime.fromisoformat(raw["created_at"])
-                if raw.get("created_at") else None
+                datetime.fromisoformat(raw["created_at"]) if raw.get("created_at") else None
             ),
         )
 
@@ -116,12 +113,12 @@ class SemanticKnowledgeStore(BaseStore):
             confidence=raw.get("confidence", 1.0),
             source=raw.get("source", "extracted"),
             created_at=(
-                datetime.fromisoformat(raw["created_at"])
-                if raw.get("created_at") else None
+                datetime.fromisoformat(raw["created_at"]) if raw.get("created_at") else None
             ),
             last_confirmed_at=(
                 datetime.fromisoformat(raw["last_confirmed_at"])
-                if raw.get("last_confirmed_at") else None
+                if raw.get("last_confirmed_at")
+                else None
             ),
         )
 
@@ -154,10 +151,11 @@ class SemanticKnowledgeStore(BaseStore):
         keys = await self._store.list_keys("sn:")
         for key in keys:
             data = await self._store.get(key)
-            if data is not None:
-                node = self._deserialize_node(data)
-                if node and node.name == name:
-                    return node
+            if data is None:
+                continue
+            node = self._deserialize_node(data)
+            if node and node.name == name:
+                return node
         return None
 
     async def search_nodes(

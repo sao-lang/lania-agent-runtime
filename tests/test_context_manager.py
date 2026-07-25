@@ -19,21 +19,29 @@ from src.memory._types import EpisodicMemoryEntry, RecallResult
 def mock_memory() -> MagicMock:
     """创建 mock MemoryService。"""
     memory = MagicMock()
-    memory.recall_raw = AsyncMock(return_value=RecallResult(
-        episodic_memories=[
-            EpisodicMemoryEntry(
-                id="mem_0", session_id="test", turn_index=0,
-                summary="用户询问天气", importance=0.8,
-            ),
-            EpisodicMemoryEntry(
-                id="mem_1", session_id="test", turn_index=1,
-                summary="助理回答晴天", importance=0.5,
-            ),
-        ],
-        entity_profile={"name": {"value": "Alice"}},
-        concepts=[{"name": "Python", "description": "编程语言"}],
-        tone_instruction="用户偏好: 简洁回复",
-    ))
+    memory.recall_raw = AsyncMock(
+        return_value=RecallResult(
+            episodic_memories=[
+                EpisodicMemoryEntry(
+                    id="mem_0",
+                    session_id="test",
+                    turn_index=0,
+                    summary="用户询问天气",
+                    importance=0.8,
+                ),
+                EpisodicMemoryEntry(
+                    id="mem_1",
+                    session_id="test",
+                    turn_index=1,
+                    summary="助理回答晴天",
+                    importance=0.5,
+                ),
+            ],
+            entity_profile={"name": {"value": "Alice"}},
+            concepts=[{"name": "Python", "description": "编程语言"}],
+            tone_instruction="用户偏好: 简洁回复",
+        )
+    )
     return memory
 
 
@@ -71,7 +79,9 @@ class TestContextManager:
         assert "You are a helper" in messages[0]["content"]
 
     async def test_assemble_includes_raw_messages(
-        self, mock_memory: MagicMock, ctx: MagicMock,
+        self,
+        mock_memory: MagicMock,
+        ctx: MagicMock,
     ) -> None:
         """测试 assemble 包含保留的原始消息。"""
         manager = ContextManager(
@@ -86,7 +96,9 @@ class TestContextManager:
         assert "assistant" in roles
 
     async def test_assemble_with_memory_data(
-        self, mock_memory: MagicMock, ctx: MagicMock,
+        self,
+        mock_memory: MagicMock,
+        ctx: MagicMock,
     ) -> None:
         """测试 assemble 包含记忆数据。"""
         manager = ContextManager(
@@ -100,7 +112,9 @@ class TestContextManager:
         assert "用户询问天气" in system_content or "记忆" in system_content
 
     async def test_assemble_calls_recall_raw(
-        self, mock_memory: MagicMock, ctx: MagicMock,
+        self,
+        mock_memory: MagicMock,
+        ctx: MagicMock,
     ) -> None:
         """测试 assemble 调用了 MemoryService.recall_raw。"""
         manager = ContextManager(
@@ -131,7 +145,9 @@ class TestContextManager:
         assert isinstance(messages, list)
 
     async def test_assemble_low_token_budget(
-        self, mock_memory: MagicMock, ctx: MagicMock,
+        self,
+        mock_memory: MagicMock,
+        ctx: MagicMock,
     ) -> None:
         """测试低 token 预算下的降级行为。"""
         manager = ContextManager(
@@ -143,7 +159,9 @@ class TestContextManager:
         assert len(messages) > 0
 
     async def test_custom_components(
-        self, mock_memory: MagicMock, ctx: MagicMock,
+        self,
+        mock_memory: MagicMock,
+        ctx: MagicMock,
     ) -> None:
         """测试注入自定义组件。"""
         from src.context._selector import Selector

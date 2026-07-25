@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.runtime._types import PauseAction
+from src.runtime._types import PauseAction, RuntimeStatus
 from src.runtime.context._context import RuntimeContext
 from src.runtime.context._payload import ContextPayload
 from src.runtime.context._serializer import MessageSerializer
@@ -42,12 +42,12 @@ class RuntimeController:
     # ── 状态属性 ──
 
     @property
-    def status(self) -> str:
+    def status(self) -> RuntimeStatus:
         """Runtime 状态。"""
         return self._runtime.status
 
     @status.setter
-    def status(self, value: str) -> None:
+    def status(self, value: RuntimeStatus) -> None:
         self._runtime.status = value
 
     @property

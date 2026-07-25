@@ -51,11 +51,13 @@ class TestSelector:
 
     async def test_one_turn(self) -> None:
         """测试 1 轮对话。"""
-        ctx = _make_ctx([
-            {"role": "system", "content": "You are a helper"},
-            {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "hi"},
-        ])
+        ctx = _make_ctx(
+            [
+                {"role": "system", "content": "You are a helper"},
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hi"},
+            ]
+        )
         config = self._config(preserve_turns=10)
         result = await self._selector().select(ctx, config)
         assert result.preserve_message_count == 1
@@ -197,18 +199,20 @@ class TestSelector:
 
     async def test_mixed_roles(self) -> None:
         """测试混合角色消息。"""
-        ctx = _make_ctx([
-            {"role": "system", "content": "system"},
-            {"role": "user", "content": "hi"},
-            {"role": "assistant", "content": "hello"},
-            {"role": "user", "content": "what?"},
-            {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [{"id": "c1", "function": {"name": "f1"}}],
-            },
-            {"role": "tool", "content": "result", "tool_call_id": "c1"},
-        ])
+        ctx = _make_ctx(
+            [
+                {"role": "system", "content": "system"},
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello"},
+                {"role": "user", "content": "what?"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{"id": "c1", "function": {"name": "f1"}}],
+                },
+                {"role": "tool", "content": "result", "tool_call_id": "c1"},
+            ]
+        )
         config = self._config(preserve_turns=2)
         result = await self._selector().select(ctx, config)
 

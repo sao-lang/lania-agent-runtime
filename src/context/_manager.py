@@ -86,7 +86,9 @@ class ContextManager:
 
         # Phase 3: COMPRESS——构建 ContextPayload
         payload = await self._compressor.compress(
-            raw, decision, ctx,
+            raw,
+            decision,
+            ctx,
             force_level=self._config.compression_level,
         )
 
@@ -108,14 +110,18 @@ class ContextManager:
             基本的 ContextPayload。
         """
         messages = list(ctx.messages)
-        system_prompt = ""
-        history = []
-        if messages:
-            if messages[0].get("role") == "system":
-                system_prompt = messages[0].get("content", "")
-                history = messages[1:]
-            else:
-                history = messages
+        if not messages:
+            from src.runtime.context._payload import ContextPayload
+
+            return ContextPayload()
+
+        first = messages[0]
+        if first.get("role") == "system":
+            system_prompt = first.get("content", "")
+            history = messages[1:]
+        else:
+            system_prompt = ""
+            history = messages
 
         from src.runtime.context._payload import ContextPayload
 

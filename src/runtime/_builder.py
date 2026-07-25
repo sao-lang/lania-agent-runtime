@@ -307,6 +307,7 @@ class RuntimeBuilder:
                 mcp_manager=self._mcp_manager,
             )
             tool_executor = dispatcher.dispatch
+
             # 注册 before_llm Transform 刷新 tools_schema
             async def inject_tools_schema(data: Any, ctx: Any) -> Any:
                 ctx.services["tools_schema"] = [
@@ -317,10 +318,13 @@ class RuntimeBuilder:
             if self._hooks is None:
                 self._hooks = HookRegistry()
             from src.runtime._types import HookPoint, PrimitiveType
+
             self._hooks.register(
-                HookPoint.BEFORE_LLM, inject_tools_schema,
+                HookPoint.BEFORE_LLM,
+                inject_tools_schema,
                 primitive=PrimitiveType.TRANSFORM,
-                name="_tools_schema_refresh", priority=100,
+                name="_tools_schema_refresh",
+                priority=100,
             )
 
         # 注册 Skill before_llm Transform
@@ -328,11 +332,13 @@ class RuntimeBuilder:
             if self._hooks is None:
                 self._hooks = HookRegistry()
             from src.runtime._types import HookPoint, PrimitiveType
+
             self._hooks.register(
                 HookPoint.BEFORE_LLM,
                 self._skill_manager.get_before_llm_hook(),
                 primitive=PrimitiveType.TRANSFORM,
-                name="_skill_inject", priority=200,
+                name="_skill_inject",
+                priority=200,
             )
 
         # 注册 Memory / Context hooks
@@ -352,14 +358,18 @@ class RuntimeBuilder:
             self._services["context_manager"] = context_manager
 
             self._hooks.register(
-                HookPoint.BEFORE_LLM, ContextAssemblerHook(context_manager),
+                HookPoint.BEFORE_LLM,
+                ContextAssemblerHook(context_manager),
                 primitive=PrimitiveType.TRANSFORM,
-                name="_context_assembler", priority=300,
+                name="_context_assembler",
+                priority=300,
             )
             self._hooks.register(
-                HookPoint.AFTER_STEP, MemoryCommitHook(self._memory_service),
+                HookPoint.AFTER_STEP,
+                MemoryCommitHook(self._memory_service),
                 primitive=PrimitiveType.TRANSFORM,
-                name="_memory_commit", priority=500,
+                name="_memory_commit",
+                priority=500,
             )
 
         # 构建 Runtime（纯壳——不传任何外部组件参数）

@@ -96,13 +96,17 @@ class MCPServerManager:
 
             self._clients[config.name] = client
             logger.info(
-                "MCP Server '%s' 已连接，发现 %d 个工具", config.name, len(specs),
+                "MCP Server '%s' 已连接，发现 %d 个工具",
+                config.name,
+                len(specs),
             )
             return specs
 
         except Exception as e:
             logger.error(
-                "连接 MCP Server '%s' 失败: %s", config.name, e,
+                "连接 MCP Server '%s' 失败: %s",
+                config.name,
+                e,
                 exc_info=True,
             )
             # graceful：连接失败时关闭 client 资源
@@ -205,7 +209,5 @@ class MCPServerManager:
         """获取指定 Server 的所有工具。"""
         prefix = f"mcp_{server_name}_"
         return [
-            adapter.tool_spec
-            for key, adapter in self._adapters.items()
-            if key.startswith(prefix)
+            adapter.tool_spec for key, adapter in self._adapters.items() if key.startswith(prefix)
         ]

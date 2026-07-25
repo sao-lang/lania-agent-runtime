@@ -12,4 +12,3 @@ __all__ = [
     "SkillConfig",
     "SkillEntry",
 ]
-

@@ -26,6 +26,7 @@ from src.runtime._types import (
     PrimitiveType,
     RouterFn,
     RunResult,
+    RuntimeStatus,
     StreamEvent,
 )
 from src.runtime.context._context import RuntimeContext
@@ -92,7 +93,7 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
         """
         self.session_id: str = f"sess_{uuid.uuid4().hex[:12]}"
         self.agent_id: str = agent_id or f"agent_{uuid.uuid4().hex[:8]}"
-        self.status: str = "idle"
+        self.status: RuntimeStatus = RuntimeStatus.IDLE
 
         # 核心组件
         self._hooks: HookRegistry = hooks or HookRegistry()
@@ -191,7 +192,7 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
         Returns:
             RunResult 实例（含助理回复、会话上下文、用量统计）。
         """
-        self.status = "running"
+        self.status = RuntimeStatus.RUNNING
 
         try:
             # session_start hooks
@@ -215,18 +216,18 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
                 ctx = self._build_context()
                 await self._loop.run(ctx)
                 # LoopStrategy 完成后设置 ended 状态
-                if self.status == "running":
-                    self.status = "ended"
+                if self.status == RuntimeStatus.RUNNING:
+                    self.status = RuntimeStatus.ENDED
                 return self._make_result()
 
             # 默认 loop：ReAct 风格（兜底）
             await self._default_loop(user_input)
-            if self.status == "running":
-                self.status = "ended"
+            if self.status == RuntimeStatus.RUNNING:
+                self.status = RuntimeStatus.ENDED
             return self._make_result()
 
         except Exception as e:
-            self.status = "error"
+            self.status = RuntimeStatus.ERROR
             self._error_state["last_error"] = e
             self._error_state["consecutive_errors"] += 1
 
@@ -241,12 +242,16 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
                 content=f"发生错误: {e!s}",
                 session_id=self.session_id,
                 messages=list(self._messages),
-                status="error",
+                status=RuntimeStatus.ERROR,
             )
 
         finally:
-            if self.status not in ("error", "cancelled", "paused"):
-                self.status = "ended"
+            if self.status not in (
+                RuntimeStatus.ERROR,
+                RuntimeStatus.CANCELLED,
+                RuntimeStatus.PAUSED,
+            ):
+                self.status = RuntimeStatus.ENDED
             # session_end hooks
             await self._hooks.run_observers(
                 HookPoint.SESSION_END,
@@ -275,7 +280,7 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
         Yields:
             StreamEvent 事件流。
         """
-        self.status = "running"
+        self.status = RuntimeStatus.RUNNING
 
         try:
             # session_start hooks
@@ -313,7 +318,7 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
             # 默认流式循环（兜底）
             max_steps = self._budget.step_limit or 10
             for _ in range(max_steps):
-                if self.status != "running":
+                if self.status != RuntimeStatus.RUNNING:
                     break
 
                 ctx = self._build_context()
@@ -343,9 +348,7 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
                     self._last_llm_response = response
 
                     # after_llm transformers
-                    await self._hooks.run_transformers(
-                        HookPoint.AFTER_LLM, response, ctx
-                    )
+                    await self._hooks.run_transformers(HookPoint.AFTER_LLM, response, ctx)
 
                 elif next_step == "llm":
                     # 非流式 LLM 执行
@@ -364,15 +367,11 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
                         if isinstance(tool_result, dict):
                             self._messages.append(tool_result)
                         else:
-                            self._messages.append(
-                                {"role": "tool", "content": str(tool_result)}
-                            )
+                            self._messages.append({"role": "tool", "content": str(tool_result)})
                         result_content = str(tool_result)
                         yield StreamEvent(type="tool_end", name=tool_name, content=result_content)
 
-                        await self._hooks.run_transformers(
-                            HookPoint.AFTER_TOOL, tool_result, ctx
-                        )
+                        await self._hooks.run_transformers(HookPoint.AFTER_TOOL, tool_result, ctx)
                         await self._hooks.run_observers(
                             HookPoint.AFTER_TOOL, {"type": "after_tool"}, ctx
                         )
@@ -387,20 +386,26 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
             )
 
         except Exception as e:
-            self.status = "error"
+            self.status = RuntimeStatus.ERROR
             self._error_state["last_error"] = e
             yield StreamEvent(type="error", error=str(e))
             yield StreamEvent(
                 type="done",
-                metadata={"result": RunResult(
-                    content=f"发生错误: {e!s}",
-                    session_id=self.session_id,
-                    status="error",
-                )},
+                metadata={
+                    "result": RunResult(
+                        content=f"发生错误: {e!s}",
+                        session_id=self.session_id,
+                        status=RuntimeStatus.ERROR,
+                    )
+                },
             )
         finally:
-            if self.status not in ("error", "cancelled", "paused"):
-                self.status = "ended"
+            if self.status not in (
+                RuntimeStatus.ERROR,
+                RuntimeStatus.CANCELLED,
+                RuntimeStatus.PAUSED,
+            ):
+                self.status = RuntimeStatus.ENDED
 
     # ============ 内部方法 ============
 
@@ -498,7 +503,7 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
                 HookPoint.BEFORE_LLM, self._context_payload, ctx
             )
             if isinstance(intercept_result, BlockAction):
-                self.status = "error"
+                self.status = RuntimeStatus.ERROR
                 error_msg = f"请求被拦截: {intercept_result.reason}"
                 self._messages.append({"role": "assistant", "content": error_msg})
                 self._error_state["last_error"] = RuntimeError(error_msg)
@@ -542,11 +547,9 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
         after_data = await self._hooks.run_transformers(HookPoint.AFTER_LLM, llm_response, ctx)
 
         # after_llm interceptors（Output guardrails, Groundedness）
-        intercept_result = await self._hooks.run_interceptors(
-            HookPoint.AFTER_LLM, after_data, ctx
-        )
+        intercept_result = await self._hooks.run_interceptors(HookPoint.AFTER_LLM, after_data, ctx)
         if isinstance(intercept_result, BlockAction):
-            self.status = "error"
+            self.status = RuntimeStatus.ERROR
             return
         if isinstance(intercept_result, AllowAction) and (intercept_result.modified is not None):
             # 替换最后一条 assistant 消息
@@ -583,7 +586,7 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
             fresh_ctx,
         )
         if isinstance(intercept_result, BlockAction):
-            self.status = "error"
+            self.status = RuntimeStatus.ERROR
             return
         if isinstance(intercept_result, PauseAction):
             await self._handle_pause(intercept_result)
@@ -620,13 +623,11 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
         Args:
             user_input: 用户输入（仅用于 loop 计数）。
         """
-        logger.warning(
-            "_default_loop 被调用——未配置 LoopStrategy，使用向后兼容的兜底路径"
-        )
+        logger.warning("_default_loop 被调用——未配置 LoopStrategy，使用向后兼容的兜底路径")
         max_steps = self._budget.step_limit or 10
 
         for _ in range(max_steps):
-            if self.status != "running" or self._cancelled:
+            if self.status != RuntimeStatus.RUNNING or self._cancelled:
                 break
 
             ctx = self._build_context()
@@ -657,5 +658,3 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
                     "timestamp": time.time(),
                 }
             )
-
-

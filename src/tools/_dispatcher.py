@@ -101,7 +101,9 @@ class ToolDispatcher:
         for tc, result in zip(tool_calls, results):
             if isinstance(result, Exception):
                 logger.error(
-                    "Tool %s failed: %s", tc.get("name", ""), result,
+                    "Tool %s failed: %s",
+                    tc.get("name", ""),
+                    result,
                     exc_info=True,
                 )
 

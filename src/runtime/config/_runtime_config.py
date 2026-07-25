@@ -81,8 +81,14 @@ class RuntimeConfig:
         """
         # 类型校验：确保 dict 字段收到的是 dict
         _expect_dict = [
-            "llm", "loop", "memory", "services",
-            "plugins", "hooks", "timeout", "budget",
+            "llm",
+            "loop",
+            "memory",
+            "services",
+            "plugins",
+            "hooks",
+            "timeout",
+            "budget",
         ]
         for field_name in _expect_dict:
             val = data.get(field_name)
@@ -208,17 +214,13 @@ class RuntimeConfig:
         try:
             import yaml  # type: ignore[import-untyped]
         except ImportError:
-            raise ImportError(
-                "加载 YAML 配置需要安装 PyYAML: pip install pyyaml"
-            ) from None
+            raise ImportError("加载 YAML 配置需要安装 PyYAML: pip install pyyaml") from None
 
         with open(path, "r", encoding="utf-8-sig") as f:
             data = yaml.safe_load(f)
 
         if data is not None and not isinstance(data, dict):
-            raise ValueError(
-                f"YAML 配置顶层必须为字典，收到 {type(data).__name__}: {data}"
-            )
+            raise ValueError(f"YAML 配置顶层必须为字典，收到 {type(data).__name__}: {data}")
 
         return cls.from_dict(data or {})
 

@@ -152,7 +152,9 @@ class SkillManager:
                     data.mark_dirty()
                     logger.debug(
                         "Skill '%s' 已匹配 (score=%d >= priority=%d)",
-                        skill.name, score, skill.config.priority,
+                        skill.name,
+                        score,
+                        skill.config.priority,
                     )
 
             return data
@@ -211,7 +213,9 @@ class SkillManager:
             )
         except Exception as e:
             logger.warning(
-                "加载 skill.toml 失败 (%s): %s", toml_path, e,
+                "加载 skill.toml 失败 (%s): %s",
+                toml_path,
+                e,
                 exc_info=True,
             )
             return SkillConfig(name=default_name)

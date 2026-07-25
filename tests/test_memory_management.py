@@ -108,8 +108,10 @@ class TestCompressionManager:
 
         for i in range(3):
             entry = EpisodicMemoryEntry(
-                session_id="sess_1", turn_index=i,
-                summary=f"summary_{i}", importance=0.5 + i * 0.1,
+                session_id="sess_1",
+                turn_index=i,
+                summary=f"summary_{i}",
+                importance=0.5 + i * 0.1,
             )
             await store.write(entry)
 

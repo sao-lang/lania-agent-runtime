@@ -89,9 +89,7 @@ class TestEpisodicMemoryStore:
 
     async def test_write_and_recall(self, persistence):
         store = EpisodicMemoryStore(persistence)
-        entry = EpisodicMemoryEntry(
-            session_id="sess_1", turn_index=0, summary="test"
-        )
+        entry = EpisodicMemoryEntry(session_id="sess_1", turn_index=0, summary="test")
         await store.write(entry)
 
         entries = await store.recall_session("sess_1")
@@ -101,9 +99,7 @@ class TestEpisodicMemoryStore:
     async def test_recall_by_turn_range(self, persistence):
         store = EpisodicMemoryStore(persistence)
         for i in range(5):
-            entry = EpisodicMemoryEntry(
-                session_id="sess_1", turn_index=i, summary=f"turn_{i}"
-            )
+            entry = EpisodicMemoryEntry(session_id="sess_1", turn_index=i, summary=f"turn_{i}")
             await store.write(entry)
 
         entries = await store.recall_by_turn_range("sess_1", 1, 3)
@@ -113,9 +109,7 @@ class TestEpisodicMemoryStore:
     async def test_recall_session_limit(self, persistence):
         store = EpisodicMemoryStore(persistence)
         for i in range(10):
-            entry = EpisodicMemoryEntry(
-                session_id="sess_1", turn_index=i, summary=f"turn_{i}"
-            )
+            entry = EpisodicMemoryEntry(session_id="sess_1", turn_index=i, summary=f"turn_{i}")
             await store.write(entry)
 
         entries = await store.recall_session("sess_1", limit=3)
@@ -126,21 +120,25 @@ class TestEpisodicMemoryStore:
     async def test_count_session(self, persistence):
         store = EpisodicMemoryStore(persistence)
         for i in range(5):
-            entry = EpisodicMemoryEntry(
-                session_id="sess_1", turn_index=i, summary=f"turn_{i}"
-            )
+            entry = EpisodicMemoryEntry(session_id="sess_1", turn_index=i, summary=f"turn_{i}")
             await store.write(entry)
         assert await store.count_session("sess_1") == 5
 
     async def test_search_by_entities(self, persistence):
         store = EpisodicMemoryStore(persistence)
         entry1 = EpisodicMemoryEntry(
-            session_id="sess_1", user_id="u1", turn_index=0,
-            summary="about Python", entities=["python", "code"],
+            session_id="sess_1",
+            user_id="u1",
+            turn_index=0,
+            summary="about Python",
+            entities=["python", "code"],
         )
         entry2 = EpisodicMemoryEntry(
-            session_id="sess_1", user_id="u1", turn_index=1,
-            summary="about Java", entities=["java"],
+            session_id="sess_1",
+            user_id="u1",
+            turn_index=1,
+            summary="about Java",
+            entities=["java"],
         )
         await store.write(entry1)
         await store.write(entry2)
@@ -151,9 +149,7 @@ class TestEpisodicMemoryStore:
 
     async def test_mark_merged(self, persistence):
         store = EpisodicMemoryStore(persistence)
-        entry = EpisodicMemoryEntry(
-            session_id="sess_1", turn_index=0, summary="original"
-        )
+        entry = EpisodicMemoryEntry(session_id="sess_1", turn_index=0, summary="original")
         await store.write(entry)
         await store.mark_merged(entry.id, "merged_id")
         entries = await store.recall_session("sess_1")
@@ -162,16 +158,25 @@ class TestEpisodicMemoryStore:
     async def test_recall_user(self, persistence):
         store = EpisodicMemoryStore(persistence)
         e1 = EpisodicMemoryEntry(
-            session_id="sess_1", user_id="u1", turn_index=0,
-            summary="u1_msg", created_at=datetime.utcnow(),
+            session_id="sess_1",
+            user_id="u1",
+            turn_index=0,
+            summary="u1_msg",
+            created_at=datetime.utcnow(),
         )
         e2 = EpisodicMemoryEntry(
-            session_id="sess_2", user_id="u1", turn_index=0,
-            summary="u1_other", created_at=datetime.utcnow(),
+            session_id="sess_2",
+            user_id="u1",
+            turn_index=0,
+            summary="u1_other",
+            created_at=datetime.utcnow(),
         )
         e3 = EpisodicMemoryEntry(
-            session_id="sess_3", user_id="u2", turn_index=0,
-            summary="u2_msg", created_at=datetime.utcnow(),
+            session_id="sess_3",
+            user_id="u2",
+            turn_index=0,
+            summary="u2_msg",
+            created_at=datetime.utcnow(),
         )
         await store.write(e1)
         await store.write(e2)
@@ -189,7 +194,10 @@ class TestEntityMemoryStore:
     async def test_upsert_and_read(self, persistence):
         store = EntityMemoryStore(persistence)
         entry = await store.upsert_attribute(
-            "user", "u1", "name", "Alice",
+            "user",
+            "u1",
+            "name",
+            "Alice",
         )
         assert entry.entity_type == "user"
         assert entry.entity_key == "u1"
@@ -243,7 +251,9 @@ class TestEntityMemoryStore:
     async def test_upsert_attributes_batch(self, persistence):
         store = EntityMemoryStore(persistence)
         entry = await store.upsert_attributes(
-            "user", "u1", {"name": "Alice", "age": 30},
+            "user",
+            "u1",
+            {"name": "Alice", "age": 30},
         )
         assert entry.attributes["name"].value == "Alice"
         assert entry.attributes["age"].value == 30
@@ -300,12 +310,18 @@ class TestSemanticKnowledgeStore:
 
     async def test_search_nodes(self, persistence):
         store = SemanticKnowledgeStore(persistence)
-        await store.create_node(SemanticNode(
-            name="WorkingMemory", description="工作记忆层",
-        ))
-        await store.create_node(SemanticNode(
-            name="EpisodicMemory", description="情景记忆层",
-        ))
+        await store.create_node(
+            SemanticNode(
+                name="WorkingMemory",
+                description="工作记忆层",
+            )
+        )
+        await store.create_node(
+            SemanticNode(
+                name="EpisodicMemory",
+                description="情景记忆层",
+            )
+        )
 
         results = await store.search_nodes("memory")
         assert len(results) >= 2
@@ -325,10 +341,12 @@ class TestSemanticKnowledgeStore:
 
     async def test_merge_knowledge(self, persistence):
         store = SemanticKnowledgeStore(persistence)
-        await store.merge_knowledge([
-            ("Python", "is_a", "编程语言"),
-            ("Django", "is_framework_of", "Python"),
-        ])
+        await store.merge_knowledge(
+            [
+                ("Python", "is_a", "编程语言"),
+                ("Django", "is_framework_of", "Python"),
+            ]
+        )
         python = await store.find_node_by_name("Python")
         django = await store.find_node_by_name("Django")
         assert python is not None

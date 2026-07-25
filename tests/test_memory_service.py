@@ -35,9 +35,7 @@ class TestMemoryService:
         assert result.tone_instruction == ""
 
     async def test_recall_raw_with_data(self, memory):
-        entry = EpisodicMemoryEntry(
-            session_id="sess_1", turn_index=0, summary="test"
-        )
+        entry = EpisodicMemoryEntry(session_id="sess_1", turn_index=0, summary="test")
         await memory._episodic.write(entry)
         result = await memory.recall_raw("sess_1")
         assert len(result.episodic_memories) == 1
@@ -45,9 +43,7 @@ class TestMemoryService:
 
     async def test_recall_raw_turn_ranges(self, memory):
         for i in range(5):
-            entry = EpisodicMemoryEntry(
-                session_id="sess_1", turn_index=i, summary=f"turn_{i}"
-            )
+            entry = EpisodicMemoryEntry(session_id="sess_1", turn_index=i, summary=f"turn_{i}")
             await memory._episodic.write(entry)
 
         result = await memory.recall_raw("sess_1", turn_ranges=[(1, 3)])
@@ -55,9 +51,7 @@ class TestMemoryService:
         assert turns == {1, 2, 3}
 
     async def test_recall_basic(self, memory):
-        entry = EpisodicMemoryEntry(
-            session_id="sess_1", turn_index=0, summary="test_memory"
-        )
+        entry = EpisodicMemoryEntry(session_id="sess_1", turn_index=0, summary="test_memory")
         await memory._episodic.write(entry)
         result = await memory.recall("sess_1")
         assert "test_memory" in str(result.get("memories", []))
@@ -91,7 +85,8 @@ class TestMemoryService:
 
     async def test_checkpoint_and_restore(self, memory):
         snap = WorkingMemorySnapshot(
-            session_id="sess_1", step_index=3,
+            session_id="sess_1",
+            step_index=3,
             messages=[{"role": "user", "content": "hi"}],
         )
         await memory.checkpoint(snap)
@@ -107,7 +102,10 @@ class TestMemoryService:
 
     async def test_recall_with_user_id(self, memory):
         await memory._entity.upsert_attribute(
-            "user", "u1", "name", "Alice",
+            "user",
+            "u1",
+            "name",
+            "Alice",
             source_session="sess_1",
         )
         result = await memory.recall_raw("sess_1", user_id="u1")

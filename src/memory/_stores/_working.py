@@ -97,9 +97,7 @@ class WorkingMemoryStore(BaseStore[WorkingMemorySnapshot]):
             error_state=ErrorStateSnapshot(**raw.get("error_state", {})),
             hook_states=raw.get("hook_states", {}),
             captured_at=(
-                datetime.fromisoformat(raw["captured_at"])
-                if raw.get("captured_at")
-                else None
+                datetime.fromisoformat(raw["captured_at"]) if raw.get("captured_at") else None
             ),
             version=raw.get("version", 1),
             ttl=raw.get("ttl", 3600),

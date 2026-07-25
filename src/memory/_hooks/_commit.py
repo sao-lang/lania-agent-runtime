@@ -72,9 +72,11 @@ class MemoryCommitHook:
             for msg in reversed(messages):
                 if msg.get("role") == "assistant" and assistant_message is None:
                     assistant_message = msg.get("content", "")
-                if (assistant_message is not None
-                        and msg.get("role") == "user"
-                        and user_message is None):
+                if (
+                    assistant_message is not None
+                    and msg.get("role") == "user"
+                    and user_message is None
+                ):
                     user_message = msg.get("content", "")
                     break
 
@@ -113,7 +115,9 @@ class MemoryCommitHook:
 
         except Exception as e:
             logger.warning(
-                "MemoryCommitHook 写入失败: %s: %s", type(e).__name__, e,
+                "MemoryCommitHook 写入失败: %s: %s",
+                type(e).__name__,
+                e,
                 exc_info=True,
             )
 

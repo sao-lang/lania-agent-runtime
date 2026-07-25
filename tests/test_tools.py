@@ -269,9 +269,13 @@ class TestToolDispatcher:
 
         ctx = RuntimeContext(
             messages=(
-                {"role": "assistant", "content": "", "tool_calls": [
-                    {"id": "call_2", "name": "calculator", "arguments": {"a": 10, "b": 20}},
-                ]},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"id": "call_2", "name": "calculator", "arguments": {"a": 10, "b": 20}},
+                    ],
+                },
             ),
         )
         result = await dispatcher.dispatch(ctx)
@@ -284,9 +288,7 @@ class TestToolDispatcher:
         from src.runtime.context._context import RuntimeContext
 
         ctx = RuntimeContext(
-            messages=(
-                {"role": "user", "content": "你好"},
-            ),
+            messages=({"role": "user", "content": "你好"},),
         )
         result = await dispatcher.dispatch(ctx)
         assert result is None
@@ -329,12 +331,7 @@ class TestToolRuntimeIntegration:
         registry.register(_make_calc_spec())
         registry.register(_make_greet_spec())
 
-        runtime = (
-            RuntimeBuilder()
-            .system_prompt("你是一个助手")
-            .tool_registry(registry)
-            .build()
-        )
+        runtime = RuntimeBuilder().system_prompt("你是一个助手").tool_registry(registry).build()
 
         # 验证 tool_executor 已被 Builder 设置为 dispatcher.dispatch
         assert runtime._tool_executor is not None
@@ -347,12 +344,7 @@ class TestToolRuntimeIntegration:
         registry.register(_make_calc_spec())
         registry.register(_make_greet_spec())
 
-        runtime = (
-            RuntimeBuilder()
-            .system_prompt("你是一个助手")
-            .tool_registry(registry)
-            .build()
-        )
+        runtime = RuntimeBuilder().system_prompt("你是一个助手").tool_registry(registry).build()
 
         # 执行 before_llm Transform 验证 tools_schema 注入
         from src.runtime._types import BudgetSnapshot
@@ -387,6 +379,7 @@ class TestToolRuntimeIntegration:
 
     async def test_runtime_tool_executor_direct(self) -> None:
         """直接传入 tool_executor，不经过 Builder。"""
+
         async def fallback_executor(ctx):
             return {"role": "tool", "content": "fallback"}
 
@@ -428,12 +421,7 @@ class TestToolRuntimeBuilderIntegration:
         registry = ToolRegistry()
         registry.register(_make_calc_spec())
 
-        runtime = (
-            RuntimeBuilder()
-            .system_prompt("你是一个助手")
-            .tool_registry(registry)
-            .build()
-        )
+        runtime = RuntimeBuilder().system_prompt("你是一个助手").tool_registry(registry).build()
 
         # tool_executor 被设为 dispatcher.dispatch
         assert runtime._tool_executor is not None

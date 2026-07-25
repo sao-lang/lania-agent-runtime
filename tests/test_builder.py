@@ -118,11 +118,13 @@ class TestRuntimeBuilder:
         from src.memory._service import MemoryService
 
         mem = MemoryService(persistence=SQLitePersistence(":memory:"))
-        runtime = (RuntimeBuilder()
+        runtime = (
+            RuntimeBuilder()
             .system_prompt("助手")
             .memory(mem)
             .context(config=ContextConfig(compression_level=4, preserve_turns=5))
-            .build())
+            .build()
+        )
         cfg = runtime._services["context_manager"]._config
         assert cfg.compression_level == 4
         assert cfg.preserve_turns == 5
@@ -132,10 +134,12 @@ class TestRuntimeBuilder:
         """.context() 单独使用时不崩溃，配置被静默忽略（带 warning）。"""
         from src.context import ContextConfig
 
-        runtime = (RuntimeBuilder()
+        runtime = (
+            RuntimeBuilder()
             .system_prompt("助手")
             .context(config=ContextConfig(compression_level=4))
-            .build())
+            .build()
+        )
         # 没有 memory，就没有 context_manager
         assert "context_manager" not in runtime._services
 

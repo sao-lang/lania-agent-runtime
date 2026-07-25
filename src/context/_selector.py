@@ -102,10 +102,7 @@ class Selector:
 
                 if has_tool_calls and config.preserve_tool_context:
                     # 向前收集所有 tool result
-                    while (
-                        i >= content_start
-                        and messages[i].get("role") == "tool"
-                    ):
+                    while i >= content_start and messages[i].get("role") == "tool":
                         current_turn.insert(0, i)
                         i -= 1
 

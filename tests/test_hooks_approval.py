@@ -104,37 +104,49 @@ class TestRegexContentPolicy:
 
 class TestCompoundPolicy:
     async def test_any_strategy_one_match(self) -> None:
-        policy = CompoundPolicy([
-            ToolNamePolicy(["deploy"]),
-            BudgetThresholdPolicy(token_threshold=1000),
-        ], strategy="any")
+        policy = CompoundPolicy(
+            [
+                ToolNamePolicy(["deploy"]),
+                BudgetThresholdPolicy(token_threshold=1000),
+            ],
+            strategy="any",
+        )
         ctx = MockContext(token_used=50)
         need, _ = await policy.needs_approval(ctx, "deploy", {})
         assert need is True
 
     async def test_any_strategy_no_match(self) -> None:
-        policy = CompoundPolicy([
-            ToolNamePolicy(["deploy"]),
-            BudgetThresholdPolicy(token_threshold=1000),
-        ], strategy="any")
+        policy = CompoundPolicy(
+            [
+                ToolNamePolicy(["deploy"]),
+                BudgetThresholdPolicy(token_threshold=1000),
+            ],
+            strategy="any",
+        )
         ctx = MockContext(token_used=50)
         need, _ = await policy.needs_approval(ctx, "get_weather", {})
         assert need is False
 
     async def test_all_strategy_all_match(self) -> None:
-        policy = CompoundPolicy([
-            ToolNamePolicy(["deploy"]),
-            BudgetThresholdPolicy(token_threshold=50),
-        ], strategy="all")
+        policy = CompoundPolicy(
+            [
+                ToolNamePolicy(["deploy"]),
+                BudgetThresholdPolicy(token_threshold=50),
+            ],
+            strategy="all",
+        )
         ctx = MockContext(token_used=100)
         need, _ = await policy.needs_approval(ctx, "deploy", {})
         assert need is True
 
     async def test_all_strategy_partial_match(self) -> None:
-        policy = CompoundPolicy([
-            ToolNamePolicy(["deploy"]),
-            BudgetThresholdPolicy(token_threshold=1000),
-        ], strategy="all")
+        policy = CompoundPolicy(
+            [
+                ToolNamePolicy(["deploy"]),
+                BudgetThresholdPolicy(token_threshold=1000),
+            ],
+            strategy="all",
+        )
         ctx = MockContext(token_used=50)
         need, _ = await policy.needs_approval(ctx, "deploy", {})
         assert need is False
@@ -153,6 +165,7 @@ class TestHumanApprovalInterceptor:
         ctx = MockContext()
         result = await interceptor({"tool_name": "get_weather", "arguments": {}}, ctx)
         from src.runtime._types import AllowAction
+
         assert isinstance(result, AllowAction)
 
     async def test_approval_needed_blocking(self) -> None:
@@ -161,6 +174,7 @@ class TestHumanApprovalInterceptor:
         ctx = MockContext()
         result = await interceptor({"tool_name": "deploy", "arguments": {}}, ctx)
         from src.runtime._types import PauseAction
+
         assert isinstance(result, PauseAction)
         assert result.context["tool_name"] == "deploy"
 
@@ -170,6 +184,7 @@ class TestHumanApprovalInterceptor:
         ctx = MockContext()
         result = await interceptor({"tool_name": "deploy", "arguments": {}}, ctx)
         from src.runtime._types import AllowAction
+
         assert isinstance(result, AllowAction)
 
     async def test_mark_approved(self) -> None:
@@ -181,6 +196,7 @@ class TestHumanApprovalInterceptor:
             {"tool_name": "deploy", "arguments": {}, "approval_id": "approval_1"}, ctx
         )
         from src.runtime._types import AllowAction
+
         assert isinstance(result, AllowAction)
 
 
@@ -189,6 +205,7 @@ class TestSelfCritiqueHook:
 
     async def test_basic_call(self) -> None:
         from src.runtime.hooks._critique_hook import SelfCritiqueHook
+
         hook = SelfCritiqueHook()
         ctx = type("MockCtx", (), {"services": {}, "step_index": 1})()
         await hook({"response": "test"}, ctx)
@@ -197,6 +214,7 @@ class TestSelfCritiqueHook:
 
     async def test_no_response(self) -> None:
         from src.runtime.hooks._critique_hook import SelfCritiqueHook
+
         hook = SelfCritiqueHook()
         ctx = type("MockCtx", (), {"services": {}, "step_index": 1})()
         await hook({}, ctx)

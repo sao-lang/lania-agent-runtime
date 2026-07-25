@@ -12,6 +12,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
+from src.runtime._types import RuntimeStatus
 from src.runtime.llm._models import FinishReason
 from src.runtime.loops._base import LoopStrategy
 from src.runtime.loops._types import StepResult, StepStatus
@@ -72,12 +73,12 @@ class ReActLoop(LoopStrategy):
 
         for iteration in range(self._max_iterations):
             # 检查 Runtime 状态
-            if ctl.status != "running":
+            if ctl.status != RuntimeStatus.RUNNING:
                 break
 
             # 步前 hook：Interceptor → Transformer → Observer
             if await self._run_before_step_hooks(ctx):
-                ctl.status = "error"
+                ctl.status = RuntimeStatus.ERROR
                 break  # 被 Interceptor 阻断
 
             # Router：决定步骤类型（默认走 LLM）
@@ -98,12 +99,14 @@ class ReActLoop(LoopStrategy):
             ctl.budget.step_count += 1
 
             # 记录 step history
-            ctl.step_history.append({
-                "step_index": ctl.step_index,
-                "step_id": f"react_{iteration}",
-                "timestamp": time.time(),
-                "finish_reason": step_result.finish_reason.value,
-            })
+            ctl.step_history.append(
+                {
+                    "step_index": ctl.step_index,
+                    "step_id": f"react_{iteration}",
+                    "timestamp": time.time(),
+                    "finish_reason": step_result.finish_reason.value,
+                }
+            )
 
             # 根据结果判断是否继续
             if step_result.is_blocked:
@@ -139,12 +142,12 @@ class ReActLoop(LoopStrategy):
         ctl = self._controller
 
         for iteration in range(self._max_iterations):
-            if ctl.status != "running":
+            if ctl.status != RuntimeStatus.RUNNING:
                 break
 
             # 流式场景也执行步前 hook
             if await self._run_before_step_hooks(ctx):
-                ctl.status = "error"
+                ctl.status = RuntimeStatus.ERROR
                 yield {"type": "error", "error": "before_step 拦截"}
                 break
 
@@ -175,7 +178,8 @@ class ReActLoop(LoopStrategy):
             ctl.budget.step_count += 1
 
             if step_result.is_blocked or step_result.status in (
-                StepStatus.PAUSED, StepStatus.ERROR
+                StepStatus.PAUSED,
+                StepStatus.ERROR,
             ):
                 break
             if step_result.finish_reason.value in ("stop", "length"):

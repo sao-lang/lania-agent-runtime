@@ -16,6 +16,7 @@ import json
 import time
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
+from src.runtime._types import RuntimeStatus
 from src.runtime.llm._models import FinishReason
 from src.runtime.loops._base import LoopStrategy
 from src.runtime.loops._types import Plan, PlanStep, StepResult, StepStatus
@@ -89,12 +90,12 @@ class PlanExecuteLoop(LoopStrategy):
 
         # === Phase 1: 规划 ===
         if await self._run_before_step_hooks(ctx):
-            ctl.status = "error"
+            ctl.status = RuntimeStatus.ERROR
             return
 
         plan = await self._run_planner(ctx, ctl)
         if plan is None:
-            ctl.status = "error"
+            ctl.status = RuntimeStatus.ERROR
             return
 
         # 保存计划到 Runtime
@@ -108,7 +109,7 @@ class PlanExecuteLoop(LoopStrategy):
         total_steps = 0
 
         while step_index < len(plan.steps):
-            if ctl.status != "running":
+            if ctl.status != RuntimeStatus.RUNNING:
                 break
             if total_steps >= self._max_iterations:
                 break
@@ -117,7 +118,7 @@ class PlanExecuteLoop(LoopStrategy):
 
             # 步前 hook：Interceptor → Transformer → Observer
             if await self._run_before_step_hooks(ctx):
-                ctl.status = "error"
+                ctl.status = RuntimeStatus.ERROR
                 break
 
             # Router 检查
@@ -145,13 +146,15 @@ class PlanExecuteLoop(LoopStrategy):
             ctx = ctl.build_context()
 
             # 记录 step history
-            ctl.step_history.append({
-                "step_index": ctl.step_index,
-                "step_id": step.id,
-                "description": step.description,
-                "timestamp": time.time(),
-                "finish_reason": step_result.finish_reason.value,
-            })
+            ctl.step_history.append(
+                {
+                    "step_index": ctl.step_index,
+                    "step_id": step.id,
+                    "description": step.description,
+                    "timestamp": time.time(),
+                    "finish_reason": step_result.finish_reason.value,
+                }
+            )
 
             # 检查是否被阻断
             if step_result.is_blocked or step_result.status == StepStatus.PAUSED:
@@ -209,7 +212,7 @@ class PlanExecuteLoop(LoopStrategy):
         total_steps = 0
 
         while step_index < len(plan.steps):
-            if ctl.status != "running":
+            if ctl.status != RuntimeStatus.RUNNING:
                 break
             if total_steps >= self._max_iterations:
                 break
@@ -237,7 +240,8 @@ class PlanExecuteLoop(LoopStrategy):
             ctx = ctl.build_context()
 
             if step_result.is_blocked or step_result.status in (
-                StepStatus.PAUSED, StepStatus.ERROR,
+                StepStatus.PAUSED,
+                StepStatus.ERROR,
             ):
                 break
 
@@ -304,7 +308,7 @@ class PlanExecuteLoop(LoopStrategy):
             f"当前计划: {json.dumps(self._plan_to_dict(current_plan), ensure_ascii=False)}\n"
             f"已完成步骤索引: {current_index}\n"
             "请根据执行进度重新调整计划。"
-            '返回 JSON 格式：'
+            "返回 JSON 格式："
             '{"steps": [{"id": "...", "description": "...", "depends_on": []}]}'
         )
 
@@ -335,9 +339,7 @@ class PlanExecuteLoop(LoopStrategy):
             return None
 
         # 策略 1：提取 ```json ... ``` 代码块
-        json_block_match = re.search(
-            r"```(?:json)?\s*\n?([\s\S]*?)```", content, re.DOTALL
-        )
+        json_block_match = re.search(r"```(?:json)?\s*\n?([\s\S]*?)```", content, re.DOTALL)
         json_str = json_block_match.group(1).strip() if json_block_match else content.strip()
 
         # 策略 2：提取最外层 { 和 } 之间的内容

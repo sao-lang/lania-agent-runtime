@@ -15,10 +15,7 @@ def __getattr__(name: str) -> Any:
     import importlib
 
     if name == "ContextAssemblerHook":
-        mod = importlib.import_module(
-            "src.context.context_hooks._assembler_hook"
-        )
+        mod = importlib.import_module("src.context.context_hooks._assembler_hook")
         return getattr(mod, name)
     msg = f"module {__name__!r} has no attribute {name!r}"
     raise AttributeError(msg)
-

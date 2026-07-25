@@ -79,10 +79,7 @@ class TokenManager:
         budget = max_tokens - reserve
 
         # 估算原始消息 token
-        message_tokens = sum(
-            self.estimate_tokens(str(m.get("content", "")))
-            for m in raw_messages
-        )
+        message_tokens = sum(self.estimate_tokens(str(m.get("content", ""))) for m in raw_messages)
         remaining = budget - message_tokens
 
         if remaining <= 0:
@@ -96,24 +93,16 @@ class TokenManager:
 
         # 按优先级裁剪
         payload = self._trim_field(payload, "tool_results", remaining)
-        remaining -= self.estimate_tokens(
-            "\n".join(str(x) for x in payload.tool_results)
-        )
+        remaining -= self.estimate_tokens("\n".join(str(x) for x in payload.tool_results))
 
         payload = self._trim_field(payload, "rag_documents", remaining)
-        remaining -= self.estimate_tokens(
-            "\n".join(str(x) for x in payload.rag_documents)
-        )
+        remaining -= self.estimate_tokens("\n".join(str(x) for x in payload.rag_documents))
 
         payload = self._trim_field(payload, "injected_context", remaining)
-        remaining -= self.estimate_tokens(
-            "\n".join(str(x) for x in payload.injected_context)
-        )
+        remaining -= self.estimate_tokens("\n".join(str(x) for x in payload.injected_context))
 
         payload = self._trim_field(payload, "memories", remaining)
-        remaining -= self.estimate_tokens(
-            "\n".join(str(x) for x in payload.memories)
-        )
+        remaining -= self.estimate_tokens("\n".join(str(x) for x in payload.memories))
 
         return payload
 

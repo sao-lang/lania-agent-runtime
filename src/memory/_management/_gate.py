@@ -38,14 +38,22 @@ class MemoryCommitGate:
         r"^\s*$",
     ]
 
+    # ── 重要性阈值常量 ──
+    _IMPORTANCE_BASE: float = 0.3
+    """基础重要性分数。"""
+    _IMPORTANCE_CRITICAL: float = 0.9
+    """检测到关键信息时的重要性分数。"""
+    _IMPORTANCE_LONG_RESPONSE: float = 0.5
+    """长回复时的重要性分数下限。"""
+    _LONG_RESPONSE_LENGTH: int = 200
+    """长回复判断阈值（字符数）。"""
+    _RECORD_THRESHOLD: float = 0.3
+    """是否值得记录的重要性阈值。"""
+
     def __init__(self) -> None:
         """初始化门控。"""
-        self._critical_patterns = [
-            re.compile(p) for p in self.CRITICAL_PATTERNS
-        ]
-        self._skip_patterns = [
-            re.compile(p) for p in self.SKIP_PATTERNS
-        ]
+        self._critical_patterns = [re.compile(p) for p in self.CRITICAL_PATTERNS]
+        self._skip_patterns = [re.compile(p) for p in self.SKIP_PATTERNS]
 
     async def evaluate(
         self,
@@ -62,12 +70,14 @@ class MemoryCommitGate:
         Returns:
             门控决策结果。
         """
-        importance = 0.3
+        importance = self._IMPORTANCE_BASE
         reason = "general_conversation"
 
         if not user_message:
             return GateDecision(
-                importance=0.0, should_record=False, reason="no_user_input",
+                importance=0.0,
+                should_record=False,
+                reason="no_user_input",
             )
 
         stripped = user_message.strip()
@@ -84,17 +94,17 @@ class MemoryCommitGate:
         # 检测关键信息
         for pattern in self._critical_patterns:
             if pattern.search(stripped):
-                importance = 0.9
+                importance = self._IMPORTANCE_CRITICAL
                 reason = "critical_info"
                 break
 
         # LLM 回复长度（长回复通常含重要信息）
-        if assistant_message and len(assistant_message) > 200:
-            importance = max(importance, 0.5)
+        if assistant_message and len(assistant_message) > self._LONG_RESPONSE_LENGTH:
+            importance = max(importance, self._IMPORTANCE_LONG_RESPONSE)
             if reason == "general_conversation":
                 reason = "long_response"
 
-        should_record = importance >= 0.3
+        should_record = importance >= self._RECORD_THRESHOLD
 
         return GateDecision(
             importance=importance,

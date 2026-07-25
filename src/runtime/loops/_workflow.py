@@ -12,11 +12,13 @@ WorkflowLoop —— 固定 DAG + Agent 决策节点策略。
 
 from __future__ import annotations
 
+import inspect
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
 
+from src.runtime._types import RuntimeStatus
 from src.runtime.llm._models import FinishReason
 from src.runtime.loops._base import LoopStrategy
 from src.runtime.loops._types import StepResult, StepStatus
@@ -124,8 +126,6 @@ class FixedNode(WorkflowNode):
         Returns:
             handler 的返回值。
         """
-        import inspect
-
         if inspect.iscoroutinefunction(self._handler):
             result = await self._handler(ctx)
         else:
@@ -344,9 +344,7 @@ class WorkflowDefinition:
         self._edges[from_node].append(to_node)
         return self
 
-    def add_condition(
-        self, node_id: str, branches: dict[str, str]
-    ) -> WorkflowDefinition:
+    def add_condition(self, node_id: str, branches: dict[str, str]) -> WorkflowDefinition:
         """
         为条件节点添加分支映射。
 
@@ -450,20 +448,16 @@ class WorkflowDefinition:
                     "type": (
                         "fixed"
                         if isinstance(n, FixedNode)
-                        else "agent" if isinstance(n, AgentNode) else "condition"
+                        else "agent"
+                        if isinstance(n, AgentNode)
+                        else "condition"
                     ),
                     "depends_on": list(n.depends_on),
                 }
                 for n in self._nodes.values()
             ],
-            "edges": [
-                {"from": k, "to": v}
-                for k, targets in self._edges.items()
-                for v in targets
-            ],
-            "conditions": {
-                cid: cm.branches for cid, cm in self._conditions.items()
-            },
+            "edges": [{"from": k, "to": v} for k, targets in self._edges.items() for v in targets],
+            "conditions": {cid: cm.branches for cid, cm in self._conditions.items()},
         }
 
     @classmethod
@@ -580,29 +574,25 @@ class WorkflowLoop(LoopStrategy):
         in_path: set[str] = set()  # 当前遍历路径，用于循环检测
 
         while current_node_id is not None:
-            if ctl.status != "running":
+            if ctl.status != RuntimeStatus.RUNNING:
                 break
 
             # 循环依赖检测
             if current_node_id in in_path:
-                raise WorkflowError(
-                    f"检测到循环依赖: {current_node_id} 已在当前路径 {in_path}"
-                )
+                raise WorkflowError(f"检测到循环依赖: {current_node_id} 已在当前路径 {in_path}")
 
             node = self._workflow.get_node(current_node_id)
 
             # 前置依赖检查
             for dep in node.depends_on:
                 if dep not in visited and dep not in in_path:
-                    raise WorkflowError(
-                        f"依赖未就绪: {node.node_id} 需要 {dep}"
-                    )
+                    raise WorkflowError(f"依赖未就绪: {node.node_id} 需要 {dep}")
 
             in_path.add(current_node_id)
 
             # 步前 hook：Interceptor → Transformer → Observer
             if await self._run_before_step_hooks(ctx):
-                ctl.status = "error"
+                ctl.status = RuntimeStatus.ERROR
                 break
 
             # 执行节点
@@ -643,7 +633,7 @@ class WorkflowLoop(LoopStrategy):
         in_path: set[str] = set()  # 当前遍历路径，用于循环检测
 
         while current_node_id is not None:
-            if ctl.status != "running":
+            if ctl.status != RuntimeStatus.RUNNING:
                 break
 
             # 循环依赖检测
@@ -697,4 +687,3 @@ class WorkflowLoop(LoopStrategy):
             status=StepStatus.SUCCESS,
             content=str(response),
         )
-

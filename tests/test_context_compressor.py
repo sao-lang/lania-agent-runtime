@@ -18,9 +18,12 @@ def _make_ctx(
 ) -> MagicMock:
     """创建 mock RuntimeContext。"""
     ctx = MagicMock()
-    ctx.messages = tuple(messages or [
-        {"role": "system", "content": "You are a helper"},
-    ])
+    ctx.messages = tuple(
+        messages
+        or [
+            {"role": "system", "content": "You are a helper"},
+        ]
+    )
     ctx.budget.token_limit = token_limit
     return ctx
 
@@ -168,18 +171,22 @@ class TestCompressor:
     async def test_get_system_prompt(self) -> None:
         """测试提取 system prompt。"""
         c = Compressor()
-        ctx = _make_ctx([
-            {"role": "system", "content": "You are helpful"},
-            {"role": "user", "content": "hi"},
-        ])
+        ctx = _make_ctx(
+            [
+                {"role": "system", "content": "You are helpful"},
+                {"role": "user", "content": "hi"},
+            ]
+        )
         prompt = c._get_system_prompt(ctx)
         assert prompt == "You are helpful"
 
     async def test_get_system_prompt_no_system(self) -> None:
         """测试无 system prompt 时返回空字符串。"""
         c = Compressor()
-        ctx = _make_ctx([
-            {"role": "user", "content": "hi"},
-        ])
+        ctx = _make_ctx(
+            [
+                {"role": "user", "content": "hi"},
+            ]
+        )
         prompt = c._get_system_prompt(ctx)
         assert prompt == ""

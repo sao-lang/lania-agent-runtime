@@ -227,6 +227,7 @@ class TestReActLoop:
 
     async def test_react_loop_with_router(self) -> None:
         """Router 覆盖默认结束行为。"""
+
         async def router_fn(ctx):
             return "continue"
 
@@ -509,12 +510,14 @@ class TestWorkflowLoop:
         wf.add_edge("step1", "step2")
         wf.start_node_id = "step1"
 
-        runtime.set_loop_strategy(WorkflowLoop(
-            hooks=runtime._hooks,
-            step_runner=runtime._step_runner,
-            controller=runtime._controller,
-            workflow_definition=wf,
-        ))
+        runtime.set_loop_strategy(
+            WorkflowLoop(
+                hooks=runtime._hooks,
+                step_runner=runtime._step_runner,
+                controller=runtime._controller,
+                workflow_definition=wf,
+            )
+        )
         await runtime.run("wf_test")
         assert results == ["s1", "s2"]
         assert runtime.status == "ended"
@@ -535,12 +538,14 @@ class TestWorkflowLoop:
         wf.add_condition("route", {"path_a": "path_a", "path_b": "path_b"})
         wf.start_node_id = "start"
 
-        runtime.set_loop_strategy(WorkflowLoop(
-            hooks=runtime._hooks,
-            step_runner=runtime._step_runner,
-            controller=runtime._controller,
-            workflow_definition=wf,
-        ))
+        runtime.set_loop_strategy(
+            WorkflowLoop(
+                hooks=runtime._hooks,
+                step_runner=runtime._step_runner,
+                controller=runtime._controller,
+                workflow_definition=wf,
+            )
+        )
         await runtime.run("condition_test")
         assert path == ["start", "path_a"]
 
@@ -552,12 +557,14 @@ class TestWorkflowLoop:
         wf.add_node(FixedNode("step2", handler=lambda ctx: "", depends_on=["step1"]))
         wf.start_node_id = "step2"
 
-        runtime.set_loop_strategy(WorkflowLoop(
-            hooks=runtime._hooks,
-            step_runner=runtime._step_runner,
-            controller=runtime._controller,
-            workflow_definition=wf,
-        ))
+        runtime.set_loop_strategy(
+            WorkflowLoop(
+                hooks=runtime._hooks,
+                step_runner=runtime._step_runner,
+                controller=runtime._controller,
+                workflow_definition=wf,
+            )
+        )
         result = await runtime.run("dep_test")
         assert result.status == "error"
         assert "依赖未就绪" in result.content

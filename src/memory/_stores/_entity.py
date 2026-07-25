@@ -59,9 +59,7 @@ class EntityMemoryStore(BaseStore[EntityMemoryEntry]):
             value=d.get("value"),
             confidence=d.get("confidence", 1.0),
             recorded_at=(
-                datetime.fromisoformat(d["recorded_at"])
-                if d.get("recorded_at")
-                else None
+                datetime.fromisoformat(d["recorded_at"]) if d.get("recorded_at") else None
             ),
             source_session=d.get("source_session", ""),
         )
@@ -72,16 +70,12 @@ class EntityMemoryStore(BaseStore[EntityMemoryEntry]):
             "entity_type": entry.entity_type,
             "entity_key": entry.entity_key,
             "attributes": {
-                name: self._attr_to_dict(attr)
-                for name, attr in entry.attributes.items()
+                name: self._attr_to_dict(attr) for name, attr in entry.attributes.items()
             },
             "history": {
-                name: [self._attr_to_dict(a) for a in hist]
-                for name, hist in entry.history.items()
+                name: [self._attr_to_dict(a) for a in hist] for name, hist in entry.history.items()
             },
-            "created_at": (
-                entry.created_at.isoformat() if entry.created_at else now.isoformat()
-            ),
+            "created_at": (entry.created_at.isoformat() if entry.created_at else now.isoformat()),
             "last_updated_at": now.isoformat(),
             "last_source_session": entry.last_source_session,
             "ttl": entry.ttl.isoformat() if entry.ttl else None,
@@ -103,9 +97,7 @@ class EntityMemoryStore(BaseStore[EntityMemoryEntry]):
             attributes=attributes,
             history=history,
             created_at=(
-                datetime.fromisoformat(raw["created_at"])
-                if raw.get("created_at")
-                else None
+                datetime.fromisoformat(raw["created_at"]) if raw.get("created_at") else None
             ),
             last_updated_at=(
                 datetime.fromisoformat(raw["last_updated_at"])
@@ -113,11 +105,7 @@ class EntityMemoryStore(BaseStore[EntityMemoryEntry]):
                 else None
             ),
             last_source_session=raw.get("last_source_session", ""),
-            ttl=(
-                datetime.fromisoformat(raw["ttl"])
-                if raw.get("ttl")
-                else None
-            ),
+            ttl=(datetime.fromisoformat(raw["ttl"]) if raw.get("ttl") else None),
         )
 
     async def read(
@@ -224,7 +212,7 @@ class EntityMemoryStore(BaseStore[EntityMemoryEntry]):
         existing.history[attr_name].append(new_attr)
         # 限制历史记录数量
         if len(existing.history[attr_name]) > self._MAX_HISTORY:
-            existing.history[attr_name] = existing.history[attr_name][-self._MAX_HISTORY:]
+            existing.history[attr_name] = existing.history[attr_name][-self._MAX_HISTORY :]
 
         existing.last_updated_at = now
         existing.last_source_session = source_session

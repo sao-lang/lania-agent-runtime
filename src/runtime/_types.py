@@ -43,6 +43,23 @@ class PrimitiveType(Enum):
     """完全接管一段执行逻辑。"""
 
 
+class RuntimeStatus(str, Enum):
+    """Runtime 运行状态枚举。"""
+
+    IDLE = "idle"
+    """初始状态，等待执行。"""
+    RUNNING = "running"
+    """正在执行中。"""
+    ENDED = "ended"
+    """正常结束。"""
+    ERROR = "error"
+    """发生错误。"""
+    CANCELLED = "cancelled"
+    """被取消。"""
+    PAUSED = "paused"
+    """被暂停（等待人工审批）。"""
+
+
 class HookPoint(Enum):
     """挂载点枚举——对应 Runtime 执行流程中的关键位置。"""
 

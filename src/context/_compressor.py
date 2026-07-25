@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
 class LEVEL:
     """分层降级级别常量。"""
+
     L1 = 1  # 原始消息 + 摘要 + 实体 + 行为
     L2 = 2  # 摘要 + 实体 + 行为
     L3 = 3  # 关键事实 + 行为
@@ -86,8 +87,7 @@ class Compressor:
 
             if raw.concepts:
                 concepts_str = "\n".join(
-                    f"- {c.get('name', '')}: {c.get('description', '')}"
-                    for c in raw.concepts
+                    f"- {c.get('name', '')}: {c.get('description', '')}" for c in raw.concepts
                 )
                 payload.injected_context.append(f"[相关概念]\n{concepts_str}")
 
@@ -184,12 +184,8 @@ class Compressor:
             cropped_indices.update(range(start, end + 1))
 
         # 被裁轮次的记忆优先
-        cropped_memories = [
-            m for m in candidates if m.turn_index in cropped_indices
-        ]
-        other_memories = [
-            m for m in candidates if m.turn_index not in cropped_indices
-        ]
+        cropped_memories = [m for m in candidates if m.turn_index in cropped_indices]
+        other_memories = [m for m in candidates if m.turn_index not in cropped_indices]
 
         # 3. 按重要性排序
         cropped_memories.sort(key=lambda m: m.importance, reverse=True)
@@ -200,9 +196,7 @@ class Compressor:
         result: list[Any] = []
         used = 0
         for memory in ordered:
-            tokens = self._token_manager.estimate_tokens(
-                getattr(memory, "summary", str(memory))
-            )
+            tokens = self._token_manager.estimate_tokens(getattr(memory, "summary", str(memory)))
             if used + tokens > budget and result:
                 break
             result.append(memory)

@@ -158,7 +158,10 @@ class MemoryService:
             dict 格式的上下文数据。
         """
         recall_result = await self.recall_raw(
-            session_id, user_id, query, max_memories=10,
+            session_id,
+            user_id,
+            query,
+            max_memories=10,
         )
 
         # 组装为类似 ContextPayload 的 dict
@@ -176,9 +179,7 @@ class MemoryService:
             "tone_instruction": tone,
             "memories": memories_text,
             "concepts": concepts_text,
-            "entity_profile": {
-                k: v.value for k, v in recall_result.entity_profile.items()
-            },
+            "entity_profile": {k: v.value for k, v in recall_result.entity_profile.items()},
         }
 
     async def recall_raw(
@@ -208,12 +209,16 @@ class MemoryService:
         if turn_ranges:
             for start, end in turn_ranges:
                 memories = await self._episodic.recall_by_turn_range(
-                    session_id, start, end,
+                    session_id,
+                    start,
+                    end,
                 )
                 episodic_memories.extend(memories)
         else:
             memories = await self._episodic.recall_session(
-                session_id, limit=max_memories, min_importance=0.3,
+                session_id,
+                limit=max_memories,
+                min_importance=0.3,
             )
             episodic_memories.extend(memories)
 
@@ -229,10 +234,12 @@ class MemoryService:
         if query:
             nodes = await self._semantic.search_nodes(query, top_k=3)
             for node in nodes:
-                concepts.append({
-                    "name": node.name,
-                    "description": node.description,
-                })
+                concepts.append(
+                    {
+                        "name": node.name,
+                        "description": node.description,
+                    }
+                )
 
         # Layer 5: 行为模式 → tone 指令
         tone_instruction = ""
@@ -240,9 +247,7 @@ class MemoryService:
             pattern = await self._pattern.read(user_id)
             if pattern and "communication_style" in pattern.patterns:
                 style = pattern.patterns["communication_style"]
-                tone_instruction = (
-                    f"用户偏好的沟通风格: {style.get('value', '')}"
-                )
+                tone_instruction = f"用户偏好的沟通风格: {style.get('value', '')}"
 
         return RecallResult(
             episodic_memories=episodic_memories,
@@ -276,9 +281,7 @@ class MemoryService:
             turn_index=step_context.turn_index,
             summary=step_context.summary,
             raw_content=step_context.raw,
-            content_type=(
-                "critical_event" if step_context.importance > 0.7 else "raw"
-            ),
+            content_type=("critical_event" if step_context.importance > 0.7 else "raw"),
             entities=step_context.entities_detected,
             topics=step_context.topics_detected,
             importance=step_context.importance,
@@ -344,10 +347,12 @@ class MemoryService:
         for entity_type, entity_key, attributes in extractions:
             for attr_name, attr_value in attributes.items():
                 if isinstance(attr_value, str) and len(attr_value) > 3:
-                    await self._semantic.merge_knowledge([
-                        (entity_key, "has_attribute", attr_name),
-                        (str(attr_value), "is_value_of", attr_name),
-                    ])
+                    await self._semantic.merge_knowledge(
+                        [
+                            (entity_key, "has_attribute", attr_name),
+                            (str(attr_value), "is_value_of", attr_name),
+                        ]
+                    )
 
     async def _extract_entities(
         self,
@@ -368,11 +373,13 @@ class MemoryService:
         extractions: list[tuple[str, str, dict]] = []
         if step_context.user_id:
             for entity in step_context.entities_detected:
-                extractions.append((
-                    "user",
-                    step_context.user_id,
-                    {f"mentioned_{entity}": entity},
-                ))
+                extractions.append(
+                    (
+                        "user",
+                        step_context.user_id,
+                        {f"mentioned_{entity}": entity},
+                    )
+                )
         return extractions
 
     @staticmethod

@@ -62,6 +62,7 @@ class MCPClient:
             merged_env = None
             if env:
                 import os
+
                 merged_env = dict(os.environ)
                 merged_env.update(env)
 
@@ -82,15 +83,8 @@ class MCPClient:
             self._stderr_task = asyncio.create_task(self._read_stderr())
 
             # 发送初始化请求
-            init_result = await self._send_request("initialize", {
-                "protocolVersion": "0.1.0",
-                "capabilities": {},
-                "clientInfo": {
-                    "name": "lania-agent-runtime",
-                    "version": "0.1.0",
-                },
-            })
-            logger.info("MCP Client 已连接（stdio），初始化结果: %s", init_result)
+            await self._send_initialize()
+            logger.info("MCP Client 已连接（stdio）")
         except Exception as e:
             raise RuntimeError(f"MCP stdio 连接失败: {e}") from e
 
@@ -113,15 +107,8 @@ class MCPClient:
             self._connected = True
 
             # 发送初始化请求
-            init_result = await self._send_request("initialize", {
-                "protocolVersion": "0.1.0",
-                "capabilities": {},
-                "clientInfo": {
-                    "name": "lania-agent-runtime",
-                    "version": "0.1.0",
-                },
-            })
-            logger.info("MCP Client 已连接（SSE），初始化结果: %s", init_result)
+            await self._send_initialize()
+            logger.info("MCP Client 已连接（SSE）")
         except Exception as e:
             raise RuntimeError(f"MCP SSE 连接失败: {e}") from e
 
@@ -167,7 +154,8 @@ class MCPClient:
                         logger.warning("MCP 子进程 kill 后未退出，强制忽略")
             except Exception as e:
                 logger.warning(
-                    "MCP 子进程关闭异常: %s", e,
+                    "MCP 子进程关闭异常: %s",
+                    e,
                     exc_info=True,
                 )
             self._process = None
@@ -209,17 +197,19 @@ class MCPClient:
         Returns:
             工具执行结果（CallToolResult 的 content 字段）。
         """
-        result = await self._send_request("tools/call", {
-            "name": tool_name,
-            "arguments": arguments,
-        })
+        result = await self._send_request(
+            "tools/call",
+            {
+                "name": tool_name,
+                "arguments": arguments,
+            },
+        )
         # 提取 content 字段，兼容 MCP 协议格式
         content = result.get("content", "")
         is_error = result.get("isError", False)
         if is_error:
             error_content = (
-                content[0].get("text", str(content))
-                if isinstance(content, list) else str(content)
+                content[0].get("text", str(content)) if isinstance(content, list) else str(content)
             )
             raise RuntimeError(f"MCP 工具 '{tool_name}' 执行错误: {error_content}")
         return content
@@ -257,6 +247,21 @@ class MCPClient:
             return await self._send_via_sse(request)
         else:
             raise RuntimeError("MCP Client 无可用传输通道")
+
+    async def _send_initialize(self) -> None:
+        """发送 MCP initialize 请求（connect_stdio/connect_sse 通用）。"""
+        init_result = await self._send_request(
+            "initialize",
+            {
+                "protocolVersion": "0.1.0",
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "lania-agent-runtime",
+                    "version": "0.1.0",
+                },
+            },
+        )
+        logger.info("MCP Client 初始化成功: %s", init_result)
 
     async def _send_via_stdio(self, request: dict) -> dict:
         """

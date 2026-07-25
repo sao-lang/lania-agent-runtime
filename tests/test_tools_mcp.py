@@ -327,10 +327,13 @@ class TestMCPClient:
         client._writer = MagicMock()
         client._writer.drain = AsyncMock()
         client._reader = AsyncMock()
-        error_response = json.dumps({
-            "jsonrpc": "2.0", "id": 1,
-            "error": {"code": -32601, "message": "Method not found"},
-        })
+        error_response = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "error": {"code": -32601, "message": "Method not found"},
+            }
+        )
 
         # 构造逐字节读取的 mock：返回 JSON + 换行
         data_bytes = error_response.encode("utf-8") + b"\n"
@@ -339,7 +342,7 @@ class TestMCPClient:
         async def byte_by_byte(n: int) -> bytes:
             if idx[0] >= len(data_bytes):
                 return b""
-            result = data_bytes[idx[0]:idx[0] + 1]
+            result = data_bytes[idx[0] : idx[0] + 1]
             idx[0] += 1
             return result
 
@@ -363,16 +366,15 @@ class TestMCPClient:
         error_response = MagicMock(spec=httpx.Response)
         error_response.status_code = 200
         error_response.json.return_value = {
-            "jsonrpc": "2.0", "id": 1,
+            "jsonrpc": "2.0",
+            "id": 1,
             "error": {"code": -32601, "message": "Method not found"},
         }
         error_response.raise_for_status = MagicMock()
         client._http_client.post = AsyncMock(return_value=error_response)
 
         with pytest.raises(RuntimeError, match="MCP 请求错误"):
-            await client._send_via_sse(
-                {"jsonrpc": "2.0", "id": 1, "method": "test", "params": {}}
-            )
+            await client._send_via_sse({"jsonrpc": "2.0", "id": 1, "method": "test", "params": {}})
 
     @pytest.mark.asyncio
     async def test_send_via_sse_http_error(self) -> None:
@@ -390,9 +392,7 @@ class TestMCPClient:
         )
 
         with pytest.raises(RuntimeError, match="MCP SSE 请求失败"):
-            await client._send_via_sse(
-                {"jsonrpc": "2.0", "id": 1, "method": "test", "params": {}}
-            )
+            await client._send_via_sse({"jsonrpc": "2.0", "id": 1, "method": "test", "params": {}})
 
     @pytest.mark.asyncio
     async def test_disconnect_active_stdio_mocked(self) -> None:
@@ -458,10 +458,12 @@ class TestMCPServerManagerMocked:
         with patch("src.tools._mcp._manager.MCPClient") as mock_client_cls:
             mock_client = MagicMock()
             mock_client.connect_stdio = AsyncMock()
-            mock_client.list_tools = AsyncMock(return_value=[
-                {"name": "read_file", "description": "读文件", "inputSchema": {}},
-                {"name": "write_file", "description": "写文件", "inputSchema": {}},
-            ])
+            mock_client.list_tools = AsyncMock(
+                return_value=[
+                    {"name": "read_file", "description": "读文件", "inputSchema": {}},
+                    {"name": "write_file", "description": "写文件", "inputSchema": {}},
+                ]
+            )
             mock_client.is_connected = True
             mock_client_cls.return_value = mock_client
 
@@ -478,7 +480,9 @@ class TestMCPServerManagerMocked:
             assert len(manager) == 1
             assert manager.is_connected("test") is True
             mock_client.connect_stdio.assert_called_once_with(
-                command="echo", args=[], env=None,
+                command="echo",
+                args=[],
+                env=None,
             )
 
     @pytest.mark.asyncio
@@ -489,9 +493,11 @@ class TestMCPServerManagerMocked:
         with patch("src.tools._mcp._manager.MCPClient") as mock_client_cls:
             mock_client = MagicMock()
             mock_client.connect_sse = AsyncMock()
-            mock_client.list_tools = AsyncMock(return_value=[
-                {"name": "get_data", "description": "获取数据", "inputSchema": {}},
-            ])
+            mock_client.list_tools = AsyncMock(
+                return_value=[
+                    {"name": "get_data", "description": "获取数据", "inputSchema": {}},
+                ]
+            )
             mock_client_cls.return_value = mock_client
 
             config = MCPServerConfig(
@@ -521,9 +527,11 @@ class TestMCPServerManagerMocked:
         with patch("src.tools._mcp._manager.MCPClient") as mock_client_cls:
             mock_client = MagicMock()
             mock_client.connect_stdio = AsyncMock()
-            mock_client.list_tools = AsyncMock(return_value=[
-                {"name": "tool1", "description": "", "inputSchema": {}},
-            ])
+            mock_client.list_tools = AsyncMock(
+                return_value=[
+                    {"name": "tool1", "description": "", "inputSchema": {}},
+                ]
+            )
             mock_client_cls.return_value = mock_client
 
             config = MCPServerConfig(name="dup", transport="stdio", command="echo")
@@ -544,9 +552,11 @@ class TestMCPServerManagerMocked:
         with patch("src.tools._mcp._manager.MCPClient") as mock_client_cls:
             mock_client = MagicMock()
             mock_client.connect_stdio = AsyncMock()
-            mock_client.list_tools = AsyncMock(return_value=[
-                {"name": "tool1", "description": "", "inputSchema": {}},
-            ])
+            mock_client.list_tools = AsyncMock(
+                return_value=[
+                    {"name": "tool1", "description": "", "inputSchema": {}},
+                ]
+            )
             mock_client.disconnect = AsyncMock()
             mock_client_cls.return_value = mock_client
 
@@ -567,11 +577,17 @@ class TestMCPServerManagerMocked:
         with patch("src.tools._mcp._manager.MCPClient") as mock_client_cls:
             mock_client = MagicMock()
             mock_client.connect_stdio = AsyncMock()
-            mock_client.list_tools = AsyncMock(return_value=[
-                {"name": "echo", "description": "回声", "inputSchema": {
-                    "properties": {"msg": {"type": "string"}},
-                }},
-            ])
+            mock_client.list_tools = AsyncMock(
+                return_value=[
+                    {
+                        "name": "echo",
+                        "description": "回声",
+                        "inputSchema": {
+                            "properties": {"msg": {"type": "string"}},
+                        },
+                    },
+                ]
+            )
             mock_client.call_tool = AsyncMock(return_value=[{"type": "text", "text": "hello"}])
             mock_client_cls.return_value = mock_client
 
@@ -589,17 +605,15 @@ class TestMCPServerManagerMocked:
         with patch("src.tools._mcp._manager.MCPClient") as mock_client_cls:
             mock_client = MagicMock()
             mock_client.connect_stdio = AsyncMock()
-            mock_client.list_tools = AsyncMock(return_value=[
-                {"name": "t1", "description": "", "inputSchema": {}},
-            ])
+            mock_client.list_tools = AsyncMock(
+                return_value=[
+                    {"name": "t1", "description": "", "inputSchema": {}},
+                ]
+            )
             mock_client_cls.return_value = mock_client
 
-            await manager.connect(
-                MCPServerConfig(name="s1", transport="stdio", command="echo")
-            )
-            await manager.connect(
-                MCPServerConfig(name="s2", transport="stdio", command="echo")
-            )
+            await manager.connect(MCPServerConfig(name="s1", transport="stdio", command="echo"))
+            await manager.connect(MCPServerConfig(name="s2", transport="stdio", command="echo"))
 
             all_tools = manager.get_all_tools()
             assert len(all_tools) == 2
@@ -632,9 +646,11 @@ class TestMCPServerManagerMocked:
         with patch("src.tools._mcp._manager.MCPClient") as mock_client_cls:
             mock_client = MagicMock()
             mock_client.connect_stdio = AsyncMock()
-            mock_client.list_tools = AsyncMock(return_value=[
-                {"name": "t1", "description": "", "inputSchema": {}},
-            ])
+            mock_client.list_tools = AsyncMock(
+                return_value=[
+                    {"name": "t1", "description": "", "inputSchema": {}},
+                ]
+            )
             mock_client.disconnect = AsyncMock()
             mock_client_cls.return_value = mock_client
 
@@ -657,9 +673,7 @@ class TestMCPServerManagerMocked:
             mock_client.list_tools = AsyncMock(return_value=[])
             mock_client_cls.return_value = mock_client
 
-            await manager.connect(
-                MCPServerConfig(name="s1", transport="stdio", command="echo")
-            )
+            await manager.connect(MCPServerConfig(name="s1", transport="stdio", command="echo"))
             assert manager.connected_servers == ["s1"]
 
 
@@ -682,12 +696,20 @@ class TestToolDispatcherMCPIntegration:
 
             ctx = RuntimeContext(
                 messages=(
-                    {"role": "assistant", "content": "", "tool_calls": [
-                        {"id": "c1", "type": "function", "function": {
-                            "name": "mcp_test_echo",
-                            "arguments": '{"msg": "hello"}',
-                        }},
-                    ]},
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "c1",
+                                "type": "function",
+                                "function": {
+                                    "name": "mcp_test_echo",
+                                    "arguments": '{"msg": "hello"}',
+                                },
+                            },
+                        ],
+                    },
                 ),
             )
             result = await dispatcher.dispatch(ctx)

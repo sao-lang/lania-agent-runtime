@@ -126,9 +126,7 @@ class EpisodicMemoryStore(BaseStore[EpisodicMemoryEntry]):
             user_id=raw.get("user_id", ""),
             turn_index=raw.get("turn_index", 0),
             created_at=(
-                datetime.fromisoformat(raw["created_at"])
-                if raw.get("created_at")
-                else None
+                datetime.fromisoformat(raw["created_at"]) if raw.get("created_at") else None
             ),
             summary=raw.get("summary", ""),
             raw_content=raw.get("raw_content"),
@@ -162,7 +160,10 @@ class EpisodicMemoryStore(BaseStore[EpisodicMemoryEntry]):
         # 写入用户索引键（用于快速跨 session 召回）
         if entry.user_id:
             index_key = self._user_key(
-                entry.user_id, entry.session_id, entry.turn_index, entry.id,
+                entry.user_id,
+                entry.session_id,
+                entry.turn_index,
+                entry.id,
             )
             await self._store.put(index_key, data)
 
@@ -208,13 +209,14 @@ class EpisodicMemoryStore(BaseStore[EpisodicMemoryEntry]):
         entries: list[EpisodicMemoryEntry] = []
         for key in keys:
             data = await self._store.get(key)
-            if data is not None:
-                entry = self._deserialize(data)
-                if entry and entry.importance >= min_importance:
-                    entries.append(entry)
+            if data is None:
+                continue
+            entry = self._deserialize(data)
+            if entry and entry.importance >= min_importance:
+                entries.append(entry)
 
         entries.sort(key=lambda e: e.turn_index, reverse=True)
-        return entries[offset: offset + limit]
+        return entries[offset : offset + limit]
 
     async def recall_user(
         self,
@@ -243,15 +245,17 @@ class EpisodicMemoryStore(BaseStore[EpisodicMemoryEntry]):
         entries: list[EpisodicMemoryEntry] = []
         for key in keys:
             data = await self._store.get(key)
-            if data is not None:
-                entry = self._deserialize(data)
-                if entry:
-                    if since and entry.created_at and entry.created_at < since:
-                        continue
-                    entries.append(entry)
+            if data is None:
+                continue
+            entry = self._deserialize(data)
+            if not entry:
+                continue
+            if since and entry.created_at and entry.created_at < since:
+                continue
+            entries.append(entry)
 
         entries.sort(key=lambda e: e.created_at or datetime.min, reverse=True)
-        return entries[offset: offset + limit]
+        return entries[offset : offset + limit]
 
     async def search_by_entities(
         self,
@@ -278,12 +282,14 @@ class EpisodicMemoryStore(BaseStore[EpisodicMemoryEntry]):
         entries: list[EpisodicMemoryEntry] = []
         for key in keys:
             data = await self._store.get(key)
-            if data is not None:
-                entry = self._deserialize(data)
-                if entry:
-                    entry_entities = set(e.lower() for e in entry.entities)
-                    if entry_entities & entity_set:  # 有交集
-                        entries.append(entry)
+            if data is None:
+                continue
+            entry = self._deserialize(data)
+            if not entry:
+                continue
+            entry_entities = set(e.lower() for e in entry.entities)
+            if entry_entities & entity_set:  # 有交集
+                entries.append(entry)
 
         entries.sort(key=lambda e: e.importance, reverse=True)
         return entries[:limit]
@@ -313,12 +319,14 @@ class EpisodicMemoryStore(BaseStore[EpisodicMemoryEntry]):
         entries: list[EpisodicMemoryEntry] = []
         for key in keys:
             data = await self._store.get(key)
-            if data is not None:
-                entry = self._deserialize(data)
-                if entry:
-                    entry_topics = set(t.lower() for t in entry.topics)
-                    if entry_topics & topic_set:
-                        entries.append(entry)
+            if data is None:
+                continue
+            entry = self._deserialize(data)
+            if not entry:
+                continue
+            entry_topics = set(t.lower() for t in entry.topics)
+            if entry_topics & topic_set:
+                entries.append(entry)
 
         entries.sort(key=lambda e: e.importance, reverse=True)
         return entries[:limit]
@@ -344,12 +352,14 @@ class EpisodicMemoryStore(BaseStore[EpisodicMemoryEntry]):
         entries: list[EpisodicMemoryEntry] = []
         for key in keys:
             parsed = self._parse_key(key)
-            if parsed and start_turn <= parsed[1] <= end_turn:
-                data = await self._store.get(key)
-                if data is not None:
-                    entry = self._deserialize(data)
-                    if entry:
-                        entries.append(entry)
+            if not parsed or not (start_turn <= parsed[1] <= end_turn):
+                continue
+            data = await self._store.get(key)
+            if data is None:
+                continue
+            entry = self._deserialize(data)
+            if entry:
+                entries.append(entry)
 
         entries.sort(key=lambda e: e.turn_index)
         return entries
