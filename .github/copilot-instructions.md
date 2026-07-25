@@ -1,18 +1,9 @@
-# Copilot Instructions
+﻿# Copilot Instructions
 
-## Skill 加载说明
+Skills 集中目录：`E:\vsc-workspace\lania-zip\skills\`
 
-本项目的 Copilot Skills 集中在统一目录中管理：
+使用方式：
+1. 先读取 skills/README.md 了解所有可用 Skill 及其加载时机
+2. 根据当前任务按需加载对应的 skills/<name>/SKILL.md
 
-> **集中目录**: E:\vsc-workspace\lania-zip\skills\
-
-### 可用 Skills
-
-| Skill | 路径 | 用途 |
-|-------|------|------|
-| ai-coding-rules | skills/ai-coding-rules/SKILL.md | 编码、重构、修复、测试、文档、调试等开发任务 |
-| grill-me | skills/grill-me/SKILL.md | Socratic 拷问与自省 |
-| code-review | skills/code-review/SKILL.md | 代码审查 |
-| simplify | skills/simplify/SKILL.md | 代码简化 |
-
-> Skills 文件位于 E:\vsc-workspace\lania-zip\skills\ 目录下，所有 lania-zip 子项目共享。
+> 所有 lania-zip 子项目共享同一套 Skill 集，无需在每个项目中重复定义。
