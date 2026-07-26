@@ -155,15 +155,6 @@ class TestAgentRuntimeEngine:
         runtime.set_tool_executor(my_tool)
         assert runtime._tool_executor is my_tool
 
-    async def test_set_loop_executor(self) -> None:
-        runtime = AgentRuntime(system_prompt="助手")
-
-        async def my_loop(ctx):
-            return "done"
-
-        runtime.set_loop_executor(my_loop)
-        assert runtime._loop_executor is my_loop
-
 
 class TestAgentRuntimeUse:
     """测试 runtime.use() 组件管理。"""

@@ -31,17 +31,6 @@ class TestRuntimeBranches:
         last_msg = runtime._messages[-1]
         assert "modified str" in str(last_msg.get("content", ""))
 
-    async def test_run_with_custom_loop_executor(self) -> None:
-        """自定义 loop_executor 路径。"""
-        runtime = AgentRuntime(system_prompt="助手")
-
-        async def custom_loop(ctx):
-            return {"content": "loop result"}
-
-        runtime.set_loop_executor(custom_loop)
-        result = await runtime.run("hi")
-        assert result.content == "loop result"
-
     async def test_before_serialize_not_dirty(self) -> None:
         """非 dirty 时不触发 before_serialize。"""
         runtime = AgentRuntime(system_prompt="助手")

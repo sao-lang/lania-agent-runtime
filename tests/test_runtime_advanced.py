@@ -1,5 +1,5 @@
 """
-高级 Runtime 测试：覆盖 run_step、tool step、pause、loop_executor 等路径。
+高级 Runtime 测试：覆盖 run_step、tool step、pause、loop_strategy 等路径。
 """
 
 from __future__ import annotations
@@ -95,32 +95,6 @@ class TestAgentRuntimeToolStep:
         # 没有设置 tool_executor，不应报错
         await runtime._execute_tool_step(ctx)
 
-
-class TestAgentRuntimeLoopExecutor:
-    """测试自定义 loop executor。"""
-
-    async def test_loop_executor_called(self) -> None:
-        runtime = AgentRuntime(system_prompt="助手")
-        loop_called: list[str] = []
-
-        async def my_loop(ctx):
-            loop_called.append("loop")
-            return "custom result"
-
-        runtime.set_loop_executor(my_loop)
-        result = await runtime.run("test")
-        assert loop_called == ["loop"]
-        assert result.content == "custom result"
-
-    async def test_loop_executor_with_dict_response(self) -> None:
-        runtime = AgentRuntime(system_prompt="助手")
-
-        async def my_loop(ctx):
-            return {"content": "dict response"}
-
-        runtime.set_loop_executor(my_loop)
-        result = await runtime.run("test")
-        assert result.content == "dict response"
 
 
 class TestAgentRuntimePauseFlow:

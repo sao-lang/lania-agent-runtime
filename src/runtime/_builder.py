@@ -13,6 +13,7 @@ from src.runtime._runtime import AgentRuntime
 from src.runtime._types import ExecutorFn, RouterFn
 from src.runtime.config._runtime_config import RuntimeConfig
 from src.runtime.hooks._registry import HookRegistry
+from src.runtime.loops._base import LoopStrategy
 from src.runtime.plugins._plugin import Plugin
 from src.tools import MCPServerManager, SkillManager, ToolRegistry
 
@@ -37,7 +38,8 @@ class RuntimeBuilder:
         self._hooks: HookRegistry | None = None
         self._llm_executor: ExecutorFn | None = None
         self._tool_executor: ExecutorFn | None = None
-        self._loop_executor: ExecutorFn | None = None
+        self._loop_strategy: LoopStrategy | None = None
+        self._loop_strategy_name: str = ""
         self._router: RouterFn | None = None
         self._serializer: Any = None
         self._services: dict[str, Any] = {}
@@ -176,20 +178,30 @@ class RuntimeBuilder:
         self._context_config = config
         return self
 
-    def loop(self, strategy: str = "", **kwargs: Any) -> RuntimeBuilder:
+    def loop(
+        self,
+        strategy: str | LoopStrategy = "",
+        **kwargs: Any,
+    ) -> RuntimeBuilder:
         """
         配置 Step Loop 策略。
 
         Args:
-            strategy: loop 策略名称（如 "react", "plan_and_execute"）。
-            kwargs: loop 配置。
+            strategy: LoopStrategy 实例，或策略名称（"react", "plan_and_execute",
+                "workflow"）。实例由用户自行配置参数；字符串使用默认参数。
+                不传或传空字符串则使用默认 ReActLoop。
 
         Returns:
             self（链式调用）。
         """
-        self._services.setdefault("loop_config", {})
-        self._services["loop_config"]["strategy"] = strategy
-        self._services["loop_config"].update(kwargs)
+        if isinstance(strategy, LoopStrategy):
+            self._loop_strategy = strategy
+            self._loop_strategy_name = ""
+        else:
+            self._loop_strategy = None
+            self._loop_strategy_name = strategy or "react"
+        # 保留 services 中的 loop_config 供外部查询
+        self._services["loop_config"] = {"strategy": strategy, **kwargs}
         return self
 
     def hooks(self, registry: HookRegistry) -> RuntimeBuilder:
@@ -378,7 +390,8 @@ class RuntimeBuilder:
             hooks=self._hooks,
             llm_executor=self._llm_executor,
             tool_executor=tool_executor,
-            loop_executor=self._loop_executor,
+            loop_strategy=self._loop_strategy,
+            loop_strategy_name=self._loop_strategy_name or "react",
             router=self._router,
             services=self._services or None,
             agent_id=self._agent_id,

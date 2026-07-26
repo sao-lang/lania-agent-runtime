@@ -65,7 +65,6 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
         hooks: HookRegistry | None = None,
         llm_executor: ExecutorFn | None = None,
         tool_executor: ExecutorFn | None = None,
-        loop_executor: ExecutorFn | None = None,
         loop_strategy: LoopStrategy | None = None,
         loop_strategy_name: str = "react",
         router: RouterFn | None = None,
@@ -81,10 +80,9 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
             hooks: HookRegistry 实例。不提供则创建新的。
             llm_executor: LLM 执行器。
             tool_executor: 工具执行器。
-            loop_executor: Step Loop 执行器（旧接口）。
-            loop_strategy: LoopStrategy 实例（新接口，优先使用）。
+            loop_strategy: LoopStrategy 实例。提供此参数时忽略 loop_strategy_name。
             loop_strategy_name: 策略名称（"react" | "plan_and_execute" |
-                "workflow"，默认 "react"）。
+                "workflow"，默认 "react"）。仅 loop_strategy 为 None 时生效。
             router: 路由函数。
             serializer: 消息序列化器。不提供则使用 DefaultSerializer。
             services: 外部服务引用字典。Builder 可在 build() 中注入
@@ -99,7 +97,6 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
         self._hooks: HookRegistry = hooks or HookRegistry()
         self._llm_executor: ExecutorFn | None = llm_executor
         self._tool_executor: ExecutorFn | None = tool_executor
-        self._loop_executor: ExecutorFn | None = loop_executor
         self._router: RouterFn | None = router
         self._serializer: MessageSerializer = serializer or DefaultSerializer()
 
@@ -130,14 +127,10 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
             serializer=self._serializer,
         )
 
-        # LoopStrategy —— 使用新接口或旧接口
+        # LoopStrategy —— 实例优先，否则按名创建
         if loop_strategy is not None:
             self._loop = loop_strategy
-        elif self._loop_executor is not None:
-            # 旧接口：保留 loop_executor 行为
-            self._loop: LoopStrategy | None = None
         else:
-            # 通过工厂创建（传入 controller 替代 services["_runtime"] 后门）
             self._register_default_strategies()
             self._loop = LoopStrategyFactory.create(
                 loop_strategy_name,
@@ -204,22 +197,11 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
             self._messages.append({"role": "user", "content": user_input})
 
             # 执行 step loop
-            if self._loop_executor is not None:
-                # 旧接口：使用自定义 loop executor
-                result = await self._loop_executor(self._build_context())
-                return self._make_result(self._extract_response(result))
-
-            if self._loop is not None:
-                # 新接口：使用 LoopStrategy
-                ctx = self._build_context()
-                await self._loop.run(ctx)
-                # LoopStrategy 完成后设置 ended 状态
-                if self.status == RuntimeStatus.RUNNING:
-                    self.status = RuntimeStatus.ENDED
-                return self._make_result()
-
-            # _loop 和 _loop_executor 均为 None 时不可达
-            # （构造器默认通过 LoopStrategyFactory 创建 _loop）
+            ctx = self._build_context()
+            await self._loop.run(ctx)
+            # LoopStrategy 完成后设置 ended 状态
+            if self.status == RuntimeStatus.RUNNING:
+                self.status = RuntimeStatus.ENDED
             return self._make_result()
 
         except Exception as e:
@@ -289,29 +271,10 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
             # 添加用户消息
             self._messages.append({"role": "user", "content": user_input})
 
-            if self._loop_executor is not None:
-                # 自定义 loop executor 流式场景
-                result = await self._loop_executor(self._build_context())
-                content = self._extract_response(result)
-                yield StreamEvent(type="text", content=content)
-                yield StreamEvent(
-                    type="done",
-                    metadata={"result": self._make_result(content)},
-                )
-                return
-
             # 使用 LoopStrategy 流式执行
-            if self._loop is not None:
-                ctx = self._build_context()
-                async for event in self._loop.run_stream(ctx):
-                    yield StreamEvent(**event)
-                yield StreamEvent(
-                    type="done",
-                    metadata={"result": self._make_result()},
-                )
-                return
-
-            # _loop 和 _loop_executor 均为 None 时不可达
+            ctx = self._build_context()
+            async for event in self._loop.run_stream(ctx):
+                yield StreamEvent(**event)
             yield StreamEvent(
                 type="done",
                 metadata={"result": self._make_result()},

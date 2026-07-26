@@ -55,33 +55,14 @@ class EngineSettersMixin:
         # 同步更新 StepRunner（保持引用一致）
         self._step_runner._tool_executor = executor
 
-    def set_loop_executor(self, executor: ExecutorFn) -> None:
-        """
-        替换 Step Loop 实现——如 ReAct → PlanExecute → Workflow。
-
-        Args:
-            executor: Loop Executor 函数（旧接口）。
-        """
-        self._loop_executor = executor
-        self._loop = None
-
-    # TODO: Multi-Agent Agent-as-tool
-    # register_tool() 方法将在 tools 体系设计完成后添加。
-    # 当前工具通过 set_tool_executor() 注入单一执行器。
-    # 详见 tools 体系设计文档（待实现）。
-    # 设计参考: docs/design/loop-strategy-design.md §3.1
-
     def set_loop_strategy(self, strategy: "LoopStrategy") -> None:
         """
-        设置 LoopStrategy（新接口）。
-
         替换当前循环策略，如 ReActLoop → PlanExecuteLoop → WorkflowLoop。
 
         Args:
             strategy: LoopStrategy 实例。
         """
         self._loop = strategy
-        self._loop_executor = None
 
     # ============ 组件管理 ============
 
