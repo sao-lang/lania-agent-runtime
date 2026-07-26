@@ -22,6 +22,8 @@ from src.runtime.loops._factory import LoopStrategyFactory
 from src.runtime.loops._plan_execute import PlanExecuteLoop
 from src.runtime.loops._react import ReActLoop
 from src.runtime.loops._types import Plan, PlanStep, StepResult, StepStatus
+from src.intent import HybridClassifier, LLMClassifier, RuleClassifier
+from src.intent._protocols import IntentClassifier
 from src.runtime.loops._workflow import (
     AgentNode,
     ConditionNode,
@@ -46,4 +48,8 @@ __all__ = [
     "StepStatus",
     "Plan",
     "PlanStep",
+    "IntentClassifier",
+    "RuleClassifier",
+    "LLMClassifier",
+    "HybridClassifier",
 ]

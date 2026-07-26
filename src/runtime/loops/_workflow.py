@@ -16,7 +16,7 @@ import inspect
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
+from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable
 
 from src.runtime._types import RuntimeStatus
 from src.runtime.llm._models import FinishReason
@@ -283,6 +283,8 @@ class WorkflowDefinition:
         self._nodes: dict[str, WorkflowNode] = {}
         self._edges: dict[str, list[str]] = {}  # from_node → [to_nodes]
         self._conditions: dict[str, ConditionMapping] = {}
+        self._intent_routes: list[dict] = []  # 意图路由元信息（序列化用）
+        self._intent_results: dict[str, str] = {}  # 意图分类结果（每轮执行前重置）
         self._start_node_id: str = ""
 
         if nodes:
@@ -431,6 +433,101 @@ class WorkflowDefinition:
         """所有条件映射的只读视图。"""
         return dict(self._conditions)
 
+    @property
+    def intent_routes(self) -> list[dict]:
+        """意图路由元信息的只读视图。"""
+        return list(self._intent_routes)
+
+    def add_intent_route(
+        self,
+        classifier: Callable[[RuntimeContext], Awaitable[str]],
+        routes: dict[str, str],
+        default: str = "",
+        node_id: str = "intent_classify",
+    ) -> WorkflowDefinition:
+        """
+        添加意图路由 —— 一个调用完成意图路由的配置。
+
+        内部自动展开为 FixedNode（分类）+ ConditionNode（路由）组合，
+        不修改 WorkflowLoop.run() 的执行引擎，不新增节点类型。
+
+        展开后的图结构：
+            [FixedNode: classify] → [ConditionNode: route] → branches
+
+        Args:
+            classifier: 意图分类器，接收 RuntimeContext 返回意图名称字符串。
+            routes: 意图名称到目标节点 ID 的映射。
+            default: 默认意图对应的目标节点 ID（未匹配时的兜底路由）。
+            node_id: 分类节点的 ID，默认为 "intent_classify"。
+
+        Returns:
+            self（支持链式调用）。
+
+        Raises:
+            WorkflowError: 如果 routes 中的目标节点不存在。
+
+        Usage:
+            wf = WorkflowDefinition()
+            wf.add_node(AgentNode("agent_qa", system_prompt="问答助手"))
+            wf.add_node(AgentNode("agent_chat", system_prompt="聊天助手"))
+            wf.add_intent_route(
+                classifier=rule_classifier,
+                routes={"qa": "agent_qa"},
+                default="agent_chat",
+            )
+        """
+        classify_id = node_id
+        route_id = f"{node_id}_route"
+
+        # 记录意图路由元信息（用于序列化）
+        self._intent_routes.append(
+            {
+                "classify_node_id": classify_id,
+                "route_node_id": route_id,
+                "routes": dict(routes),
+                "default": default,
+            }
+        )
+
+        # 意图分类结果存储在 WorkflowDefinition 实例上
+        # 每轮 WorkflowLoop.run() 执行前会重置，避免多轮重用问题
+        # 注意：不能使用 ctx.services，因为每次 build_context() 后 services 会被重建
+
+        # 步骤 1：创建分类节点（FixedNode）
+        # 执行分类器，将结果存入 self._intent_results
+        async def _classify(ctx: RuntimeContext) -> str:
+            result = await classifier(ctx)
+            self._intent_results[classify_id] = result
+            return result
+
+        self.add_node(FixedNode(classify_id, handler=_classify))
+
+        # 步骤 2：创建路由节点（ConditionNode）
+        # 从 self._intent_results 读取分类结果，走对应分支
+        # 若不在 routes 中则走 __default__（由 add_condition 自动 fallback）
+        async def _route(ctx: RuntimeContext) -> str:
+            result = self._intent_results.get(classify_id, "")
+            if result in routes:
+                return result
+            return "__default__"
+
+        self.add_node(ConditionNode(route_id, condition_fn=_route))
+
+        # 步骤 3：添加边
+        self.add_edge(classify_id, route_id)
+
+        # 步骤 4：添加条件分支（含 fallback）
+        all_routes = dict(routes)
+        if default:
+            all_routes["__default__"] = default
+        self.add_condition(route_id, all_routes)
+
+        return self
+
+    def reset_intent_results(self) -> None:
+        """重置意图分类结果（WorkflowLoop 每轮执行前调用）。"""
+        self._intent_results.clear()
+
     def to_dict(self) -> dict:
         """
         序列化为字典（支持 JSON 导出）。
@@ -456,6 +553,7 @@ class WorkflowDefinition:
             ],
             "edges": [{"from": k, "to": v} for k, targets in self._edges.items() for v in targets],
             "conditions": {cid: cm.branches for cid, cm in self._conditions.items()},
+            "intent_routes": list(self._intent_routes),
         }
 
     @classmethod
@@ -514,6 +612,12 @@ class WorkflowDefinition:
             if wf.has_node(cond_node_id):
                 wf.add_condition(cond_node_id, branches)
 
+        # 重建意图路由元信息
+        # 注意：classifier handler 本身不可序列化，
+        # from_dict 仅恢复元信息（节点 ID / 路由映射），
+        # 分类器实例需由用户在反序列化后重新注入
+        wf._intent_routes = list(data.get("intent_routes", []))
+
         # 设置起始节点
         start_id = data.get("start_node_id", "")
         if start_id and wf.has_node(start_id):
@@ -566,6 +670,9 @@ class WorkflowLoop(LoopStrategy):
         Args:
             ctx: RuntimeContext 实例。
         """
+        # 重置意图路由状态，避免多轮重用闭包变量
+        self._workflow.reset_intent_results()
+
         ctl = self._controller
         current_node_id: str | None = self._workflow.start_node_id
         visited: set[str] = set()
@@ -625,6 +732,9 @@ class WorkflowLoop(LoopStrategy):
         Yields:
             流式事件字典。
         """
+        # 重置意图路由状态，避免多轮重用闭包变量
+        self._workflow.reset_intent_results()
+
         ctl = self._controller
         current_node_id: str | None = self._workflow.start_node_id
         visited: set[str] = set()
