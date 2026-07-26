@@ -175,7 +175,126 @@ asyncio.run(main())
 > ⚠️ `HumanApprovalPlugin`、`BudgetPlugin`、`AuditPlugin` 等治理插件尚在规划中。
 > 当前可用的治理组件：`HumanApprovalInterceptor`、`SelfCritiqueHook`、`DualModelCritiqueHook`、`ReplanHook`。
 
-### 模式 E：完全自定义（100+ 行）
+### 模式 F：Loop 策略（3 种，Builder 一行切换）
+
+AgentRuntime 提供三种可插拔的 Loop 策略，通过 `.loop()` 一行切换：
+
+```python
+from src.runtime import AgentRuntime
+
+# F1: ReActLoop（默认）—— 边思考边行动，最通用的 Agent 循环
+agent = (AgentRuntime.builder()
+    .system_prompt("你是电商客服助手。")
+    .llm(model="gpt-4o", api_key="sk-...")
+    .loop("react")               # ← 默认值，可省略
+    .build())
+
+# F2: PlanExecuteLoop —— 先规划再执行，适合复杂任务拆解
+agent = (AgentRuntime.builder()
+    .system_prompt("你是数据分析助手。")
+    .llm(model="gpt-4o", api_key="sk-...")
+    .loop("plan_and_execute")    # ← 支持 replan
+    .build())
+
+# F3: WorkflowLoop —— 固定 DAG + 决策节点，适合有固定流程的场景
+from src.runtime.loops import WorkflowDefinition, AgentNode
+
+wf = WorkflowDefinition()
+wf.add_node(AgentNode("greet", system_prompt="先打招呼"))
+wf.add_node(AgentNode("answer", system_prompt="回答用户问题"))
+wf.add_edge("greet", "answer")
+
+agent = (AgentRuntime.builder()
+    .system_prompt("你是助手。")
+    .llm(model="gpt-4o", api_key="sk-...")
+    .loop(WorkflowLoop, workflow_definition=wf)   # ← 传入策略类+配置
+    .build())
+
+# 也可直接注入已配置的 LoopStrategy 实例
+from src.runtime.loops import ReActLoop, PlanExecuteLoop, WorkflowLoop
+
+my_loop = ReActLoop(hooks=..., step_runner=..., controller=..., max_iterations=20)
+agent = (AgentRuntime.builder()
+    .system_prompt("你是助手。")
+    .llm(model="gpt-4o", api_key="sk-...")
+    .loop(my_loop)               # ← 直接传入实例
+    .build())
+
+# 运行时动态切换
+await agent.set_loop_strategy("workflow")         # 按名称切换
+```
+
+> **参数说明**：
+> - `ReActLoop`: `max_iterations`（默认 10）
+> - `PlanExecuteLoop`: `max_replans`（默认 3）、`max_iterations`（默认 20）、`planner_prompt`
+> - `WorkflowLoop`: 通过 `WorkflowDefinition` 配置节点、边、条件
+>
+> 不传 `.loop()` 时默认使用 `ReActLoop`。
+
+### 模式 G：意图路由（WorkflowLoop + 分类器）
+
+WorkflowLoop 的 `add_intent_route()` 提供声明式意图路由，内置三种分类器：
+
+```python
+from src.runtime import AgentRuntime
+from src.runtime.loops import (
+    WorkflowDefinition, WorkflowLoop, AgentNode,
+    RuleClassifier, LLMClassifier, HybridClassifier,
+)
+
+# G1: 规则分类 —— 零依赖、O(n) 延迟
+rule_cls = RuleClassifier(
+    rules={
+        "qa": ["什么", "为什么", "如何", "怎么"],
+        "coding": ["代码", "实现", "bug", "函数"],
+        "summary": ["总结", "概括", "汇总"],
+    },
+    default="chat",
+)
+
+wf = WorkflowDefinition()
+wf.add_intent_route(
+    classifier=rule_cls,
+    routes={"qa": "agent_qa", "coding": "agent_coding", "summary": "agent_summary"},
+    default="agent_chat",
+)
+wf.add_node(AgentNode("agent_qa", system_prompt="你是问答助手"))
+wf.add_node(AgentNode("agent_coding", system_prompt="你是编程助手"))
+wf.add_node(AgentNode("agent_summary", system_prompt="你是总结助手"))
+wf.add_node(AgentNode("agent_chat", system_prompt="你是通用聊天助手"))
+
+agent = (AgentRuntime.builder()
+    .system_prompt("请根据用户意图路由到对应助手。")
+    .llm(model="gpt-4o", api_key="sk-...")
+    .loop(WorkflowLoop, workflow_definition=wf)
+    .build())
+
+# G2: LLM 分类 —— 灵活处理复杂语义
+llm_cls = LLMClassifier(
+    llm=lambda prompt: executor(prompt),  # LLM 调用函数
+    categories=["qa", "coding", "summary", "chat"],
+    default="chat",
+)
+
+# G3: 混合分类（推荐）—— 规则兜底 + LLM 补充
+hybrid_cls = HybridClassifier(
+    rules={"coding": ["代码", "实现", "bug"]},
+    llm=llm_func,
+    categories=["qa", "coding", "summary", "chat"],
+    threshold=2,   # 至少匹配 2 个关键词才走规则
+)
+
+# 分类器可直接作为 Callable 传入
+wf.add_intent_route(
+    classifier=hybrid_cls,    # 也支持 rule_cls / llm_cls 或任意符合协议的对象
+    routes={"qa": "agent_qa", "coding": "agent_coding"},
+    default="agent_chat",
+)
+```
+
+> **提示**：`add_intent_route()` 内部自动展开为 `FixedNode`（分类）+ `ConditionNode`（路由）+ 边 + 条件分支，零侵入 `WorkflowLoop.run()` 执行引擎。
+
+### 模式 H：完全自定义（100+ 行）
 
 ```python
 from src.runtime import AgentRuntime
@@ -222,6 +341,7 @@ runtime.intercept(HookPoint.BEFORE_LLM, my_threat_scanner, name="threat_scanner"
 | **ContextPayload** | 上下文中间层，Hook 操作此对象，Runtime 序列化为 LLM messages |
 | **RuntimeContext** | Hook 看到的只读快照 + 受限写接口 |
 | **HookRegistry** | 分层编排引擎：Transform 串行 → Intercept 短路 → Observer 并行 |
+| **LoopStrategy** | 可插拔的执行循环策略：`ReActLoop`（默认）/ `PlanExecuteLoop` / `WorkflowLoop`，通过 `set_loop_strategy()` 运行时切换 |
 | **插拔设计** | Runtime 是纯壳，不感知 LLM/工具/记忆等具体组件。`RuntimeBuilder` 提供快捷接线，用户也可手动注册任意 Hook |
 
 详细设计文档见 [`docs/design/agent-runtime-design.md`](docs/design/agent-runtime-design.md)。

@@ -11,3 +11,7 @@
 ## 文档约束
 
 设计文档 → `docs/` | 开发记录 → `overview.md` | 自省记录 → `grill-self-review.md`
+
+## 🚨 铁的纪律（违反将导致严重后果）
+
+在修改任何文件之前，必须按照`.github\skills\ai-coding-rules\rules\00-base.instructions.md`中的**R8**、**R8b**两条处理，用户的问题描述不算授权。

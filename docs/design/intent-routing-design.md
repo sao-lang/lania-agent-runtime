@@ -112,6 +112,8 @@ class WorkflowDefinition:
 
 **内部展开逻辑**：
 
+> ⚠️ 实际实现中，分类结果存储在 `WorkflowDefinition._intent_results` 字典中（而非 `ctx.services`），因为每次 `build_context()` 后 `services` 会被重建。同时 `WorkflowLoop.run()`/`run_stream()` 入口处自动调用 `reset_intent_results()` 清除旧状态，避免同一个 `WorkflowDefinition` 实例被多次 `run()` 时读到过期值。
+
 ```python
 def add_intent_route(self, classifier, routes, default="", node_id="intent_classify"):
     classify_id = node_id
@@ -119,18 +121,21 @@ def add_intent_route(self, classifier, routes, default="", node_id="intent_class
     all_routes = dict(routes)
 
     # 步骤 1：创建分类节点（FixedNode）
-    # 执行分类器，将结果存入 ctx.services["_intent_result"]
+    # 执行分类器，将结果存入 self._intent_results
     async def _classify(ctx):
         result = await classifier(ctx)
-        ctx.services["_intent_result"] = result
+        self._intent_results[classify_id] = result
         return result
 
     self.add_node(FixedNode(classify_id, handler=_classify))
 
     # 步骤 2：创建路由节点（ConditionNode）
-    # 从 ctx.services 读取分类结果，走对应分支
+    # 从 self._intent_results 读取分类结果，走对应分支
     async def _route(ctx):
-        return ctx.services.get("_intent_result", "__default__")
+        result = self._intent_results.get(classify_id, "")
+        if result in routes:
+            return result
+        return "__default__"
 
     self.add_node(ConditionNode(route_id, condition_fn=_route))
 
@@ -265,15 +270,26 @@ class HybridClassifier:
 # to_dict() 新增
 "intent_routes": [
     {
-        "classifier_type": "rule|llm|hybrid",
+        "classify_node_id": "intent_classify",
+        "route_node_id": "intent_classify_route",
         "routes": {"qa": "agent_qa", ...},
         "default": "chat_agent",
-        "config": {...},       # 分类器的反序列化配置
     }
 ]
 ```
 
-> **注意**：分类器的 handler 函数本身不可序列化。`from_dict()` 重建时需要由用户或工厂注入对应的分类器实例。
+> **注意**：分类器的 handler 函数本身不可序列化。`from_dict()` 仅恢复元信息（节点 ID / 路由映射），分类器实例需由用户在反序列化后重新注入。
+
+### 3.5 多轮安全：reset_intent_results()
+
+```python
+class WorkflowDefinition:
+    def reset_intent_results(self) -> None:
+        """重置意图分类结果（WorkflowLoop 每轮执行前调用）。"""
+        self._intent_results.clear()
+```
+
+`WorkflowLoop.run()` 和 `run_stream()` 在每轮执行开始时自动调用此方法，确保闭包变量不留存上一轮的分类结果。
 
 ---
 

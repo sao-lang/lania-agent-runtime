@@ -1,6 +1,35 @@
+### 2026-07-27
+
+#### 2. Code Review 驱动修复：闭包变量风险 + lint 清理
+
+- **时间：** 2026-07-27
+- **发起人：** user (code-review)
+- **修改文件：**
+  - `src/runtime/loops/_workflow.py` — `add_intent_route()` 闭包变量 → `WorkflowDefinition._intent_results` dict；新增 `reset_intent_results()`；`WorkflowLoop.run()`/`run_stream()` 入口自动重置
+  - `src/runtime/_builder.py` — 删除多余的 `Union` import
+  - `tests/test_workflow_intent.py` — `-> any` → `-> Any`；ruff 清理 9 个未使用的 import
+- **修改内容：** Code Review 发现 3 个问题并修复：(1) `add_intent_route()` 的闭包变量 `_intent_result` 在同一个 `WorkflowDefinition` 实例被多次 `run()` 时不会重置，改为存储在 `self._intent_results` dict 中，`WorkflowLoop.run()`/`run_stream()` 入口处自动调用 `reset_intent_results()` 清除旧状态。(2) 删除 `_builder.py` 中未使用的 `Union` import。(3) `test_workflow_intent.py` 修复 `any` → `Any`。
+- **复盘结果：** 132 项相关测试通过，ruff 零报错（仅 1 个预存 N817 风格问题）。
+- **潜在风险：** 无
+
+#### 1. 实现 WorkflowLoop 意图路由方案
+
+- **时间：** 2026-07-27
+- **发起人：** user
+- **修改文件：**
+  - `src/intent/__init__.py` — 新增，导出三种分类器
+  - `src/intent/_protocols.py` — 新增，`IntentClassifier` Protocol 定义
+  - `src/intent/_classifiers.py` — 新增，`RuleClassifier` / `LLMClassifier` / `HybridClassifier` 实现
+  - `src/runtime/loops/_workflow.py` — 新增 `WorkflowDefinition.add_intent_route()` 方法；扩展 `to_dict()`/`from_dict()` 支持意图路由元信息
+  - `src/runtime/loops/__init__.py` — 导出 `IntentClassifier`、`RuleClassifier`、`LLMClassifier`、`HybridClassifier`
+  - `tests/test_workflow_intent.py` — 新增，23 个测试用例（单元 + E2E + 序列化）
+- **修改内容：** 根据 `intent-routing-design.md` 实现意图路由功能。(1) `add_intent_route()` 作为 `WorkflowDefinition` 的声明式语法糖，内部展开为 `FixedNode`（分类）+ `ConditionNode`（路由）组合，零侵入 WorkflowLoop 执行引擎。(2) 三种内置分类器：RuleClassifier（关键词匹配）、LLMClassifier（LLM 分类）、HybridClassifier（规则兜底 + LLM 补充）。(3) 使用闭包变量（而非 `ctx.services`）在分类/路由节点间共享结果，避免 `build_context()` 重建导致的状态丢失。(4) 序列化支持：`to_dict()`/`from_dict()` 包含意图路由元信息。
+- **复盘结果：** 597 测试通过（23 个新增），ruff 零报错。
+- **潜在风险：** 无
+
 ### 2026-07-26
 
-#### 1. Simplify skill 驱动代码简化
+#### 2. Simplify skill 驱动代码简化
 
 - **时间：** 2026-07-26
 - **发起人：** user
