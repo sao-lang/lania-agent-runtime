@@ -1,9 +1,13 @@
-﻿# Copilot Instructions
+# Copilot 指令 — Skill 加载要求
 
-Skills 集中目录：`E:\vsc-workspace\lania-zip\skills\`
+| Skill | 路径 | 加载时机 |
+|-------|------|---------|
+| **`ai-coding-rules`** 🧠 | `.github/skills/ai-coding-rules/SKILL.md` | **任何开发任务必载**（编码/重构/修复/测试/文档/调试），自动按任务类型选规则文件。调试任务额外加载 `debug-tools` |
+| **`grill-me`** 🔥 | `.github/skills/grill-me/SKILL.md` | **始终加载**。触发："拷问我/grill me/自省/self-review/拷问自己"等；复杂任务完成自动触发自省 |
+| **`git`** 📝 | `.github/skills/git/SKILL.md` | git 操作（提交/推送/rebase/merge 等） |
+| **`code-review`** 🔍 | `.github/skills/code-review/SKILL.md` | 用户要求代码审查/评审/审计时加载。自动关联 `ai-coding-rules` 作为审查标准 |
+| **`simplify`** ✂️ | `.github/skills/simplify/SKILL.md` | 用户要求简化代码/去重/降复杂度时加载。自动关联 `ai-coding-rules/rules/06-refactor.instructions.md` |
 
-使用方式：
-1. 先读取 skills/README.md 了解所有可用 Skill 及其加载时机
-2. 根据当前任务按需加载对应的 skills/<name>/SKILL.md
+## 文档约束
 
-> 所有 lania-zip 子项目共享同一套 Skill 集，无需在每个项目中重复定义。
+设计文档 → `docs/` | 开发记录 → `overview.md` | 自省记录 → `grill-self-review.md`

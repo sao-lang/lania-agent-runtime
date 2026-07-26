@@ -13,3 +13,6 @@ wheels/
 .venv
 .coverage
 */.coverage
+
+# Nested skills repo (shared across projects)
+.github/skills/
