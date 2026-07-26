@@ -1,6 +1,17 @@
-### 2026-07-25
+### 2026-07-26
 
-#### 1. 新增 code-review 和 simplify 两个 skill
+#### 1. Simplify skill 驱动代码简化
+
+- **时间：** 2026-07-26
+- **发起人：** user
+- **修改文件：**
+  - `src/runtime/_runtime.py` — 删除 `_default_loop()`（~37行）、`run()`/`run_stream()`不可达兜底分支（~60行）；提升 `import RuntimeController` 到模块级；`logger.info` → `logger.debug`
+  - `src/runtime/loops/_workflow.py` — 删除 `ConditionNode.execute` 中冗余的局部 `import inspect`
+  - `tests/test_coverage_edge.py` — 同步删除 `test_default_loop_extract_assistant_response`
+  - `src/memory/_pipeline/` — 删除空目录
+- **修改内容：** 由 `simplify` skill 驱动的 7 维度代码简化。净减 ~115 行，消除 1 个空目录。
+- **复盘结果：** 575 测试通过，ruff 零报错。
+- **潜在风险：** 无（仅删除不可达死代码和局部重复导入）
 
 - **时间：** 2026-07-25 10:00
 - **发起人：** user

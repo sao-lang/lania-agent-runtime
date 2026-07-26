@@ -8,10 +8,10 @@ AgentRuntime 核心类。
 from __future__ import annotations
 
 import logging
-import time
 import uuid
 from typing import TYPE_CHECKING, Any, AsyncIterator, cast
 
+from src.runtime._control import RuntimeController
 from src.runtime._engine_mixin import EngineSettersMixin
 from src.runtime._helper_mixin import RuntimeHelperMixin
 from src.runtime._hook_mixin import HookRegistratorMixin
@@ -119,8 +119,6 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
         # 应通过 services["_controller"] 获取 RuntimeController 实例
 
         # RuntimeController —— StepRunner 和 LoopStrategy 的受控接口
-        from src.runtime._control import RuntimeController
-
         self._controller = RuntimeController(self)
         self._services["_controller"] = self._controller
 
@@ -220,10 +218,8 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
                     self.status = RuntimeStatus.ENDED
                 return self._make_result()
 
-            # 默认 loop：ReAct 风格（兜底）
-            await self._default_loop(user_input)
-            if self.status == RuntimeStatus.RUNNING:
-                self.status = RuntimeStatus.ENDED
+            # _loop 和 _loop_executor 均为 None 时不可达
+            # （构造器默认通过 LoopStrategyFactory 创建 _loop）
             return self._make_result()
 
         except Exception as e:
@@ -315,71 +311,7 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
                 )
                 return
 
-            # 默认流式循环（兜底）
-            max_steps = self._budget.step_limit or 10
-            for _ in range(max_steps):
-                if self.status != RuntimeStatus.RUNNING:
-                    break
-
-                ctx = self._build_context()
-
-                await self._hooks.run_transformers(HookPoint.BEFORE_STEP, {}, ctx)
-
-                next_step = await self._get_next_step(ctx)
-                if next_step == "end":
-                    break
-
-                self._step_index += 1
-                self._timeout["step_start_at"] = int(time.time() * 1000)
-
-                if next_step == "llm" and hasattr(self._llm_executor, "execute_stream"):
-                    # 流式 LLM 执行
-                    executor = self._llm_executor
-                    collector, response = await cast(Any, executor).execute_stream(ctx)
-                    # 逐 chunk 产出 text 事件
-                    if collector.full_content:
-                        yield StreamEvent(type="text", content=collector.full_content)
-                    # 如果有工具调用，产出 tool_start 事件
-                    for tc in response.tool_calls:
-                        yield StreamEvent(type="tool_start", name=tc.name)
-
-                    # 写回 messages 和 budget
-                    self._append_llm_response(response)
-                    self._last_llm_response = response
-
-                    # after_llm transformers
-                    await self._hooks.run_transformers(HookPoint.AFTER_LLM, response, ctx)
-
-                elif next_step == "llm":
-                    # 非流式 LLM 执行
-                    await self._execute_llm_step(ctx)
-
-                elif next_step == "tool":
-                    # Tool 执行
-                    if self._tool_executor is not None:
-                        # 查询对应的 tool name
-                        tool_name = "tool"
-                        if self._last_llm_response and self._last_llm_response.tool_calls:
-                            tool_name = self._last_llm_response.tool_calls[0].name
-                        yield StreamEvent(type="tool_start", name=tool_name)
-
-                        tool_result = await self._tool_executor(ctx)
-                        if isinstance(tool_result, dict):
-                            self._messages.append(tool_result)
-                        else:
-                            self._messages.append({"role": "tool", "content": str(tool_result)})
-                        result_content = str(tool_result)
-                        yield StreamEvent(type="tool_end", name=tool_name, content=result_content)
-
-                        await self._hooks.run_transformers(HookPoint.AFTER_TOOL, tool_result, ctx)
-                        await self._hooks.run_observers(
-                            HookPoint.AFTER_TOOL, {"type": "after_tool"}, ctx
-                        )
-
-                await self._hooks.run_transformers(HookPoint.AFTER_STEP, {}, ctx)
-                self._budget.step_count += 1
-
-            # 产出 done 事件
+            # _loop 和 _loop_executor 均为 None 时不可达
             yield StreamEvent(
                 type="done",
                 metadata={"result": self._make_result()},
@@ -466,7 +398,7 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
             await self._execute_tool_step(ctx)
         else:
             # plan 自定义 step_id（非 "llm"/"tool"）：默认走 LLM 步骤
-            logger.info(
+            logger.debug(
                 "_execute_step: plan step_id '%s' 映射为 llm 步骤",
                 step_id,
             )
@@ -612,49 +544,4 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
             ctx,
         )
 
-    async def _default_loop(self, user_input: str) -> None:
-        """
-        默认 step loop（ReAct 风格，向后兼容兜底）。
 
-        当未配置 LoopStrategy 且未配置 loop_executor 时使用。
-        正常 Builder 流程中不可达（Builder 始终设置 LoopStrategy），
-        保留仅作为手动构造 AgentRuntime 时的向后兼容路径。
-
-        Args:
-            user_input: 用户输入（仅用于 loop 计数）。
-        """
-        logger.warning("_default_loop 被调用——未配置 LoopStrategy，使用向后兼容的兜底路径")
-        max_steps = self._budget.step_limit or 10
-
-        for _ in range(max_steps):
-            if self.status != RuntimeStatus.RUNNING or self._cancelled:
-                break
-
-            ctx = self._build_context()
-
-            # before_step
-            await self._hooks.run_transformers(HookPoint.BEFORE_STEP, {}, ctx)
-
-            # Router
-            next_step = await self._get_next_step(ctx)
-            if next_step == "end":
-                break
-
-            # 执行 step
-            self._step_index += 1
-            self._timeout["step_start_at"] = int(time.time() * 1000)
-
-            await self._execute_step(next_step, ctx)
-
-            # after_step
-            await self._hooks.run_transformers(HookPoint.AFTER_STEP, {}, ctx)
-            self._budget.step_count += 1
-
-            # 记录 step history
-            self._step_history.append(
-                {
-                    "step_index": self._step_index,
-                    "step_id": next_step,
-                    "timestamp": time.time(),
-                }
-            )

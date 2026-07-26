@@ -232,8 +232,6 @@ class ConditionNode(WorkflowNode):
         Returns:
             分支名称字符串。
         """
-        import inspect
-
         if inspect.iscoroutinefunction(self._condition_fn):
             result = await self._condition_fn(ctx)
         else:

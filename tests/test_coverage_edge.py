@@ -88,19 +88,6 @@ class TestRuntimeEdgeCases:
         await registry.run_transformers(HookPoint.AFTER_STEP, {}, None)
         assert transformed == ["after_step"]
 
-    async def test_default_loop_extract_assistant_response(self) -> None:
-        """_default_loop 从 messages 中提取 assistant 回复。"""
-        runtime = AgentRuntime(system_prompt="助手")
-
-        async def mock_llm(ctx):
-            return {"role": "assistant", "content": "final answer"}
-
-        runtime.set_llm_executor(mock_llm)
-        # 设置 step_limit 为 1 让循环只执行一次
-        runtime._budget.step_limit = 1
-        result = await runtime.run("test")
-        assert result.content == "final answer"
-
     async def test_extract_response_dict(self) -> None:
         """_extract_response 处理 dict 类型。"""
         runtime = AgentRuntime(system_prompt="助手")
