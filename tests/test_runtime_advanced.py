@@ -50,7 +50,7 @@ class TestAgentRuntimeToolStep:
         runtime.set_llm_executor(mock_llm)
 
         # 直接调用 _execute_tool_step
-        runtime._tool_executor = mock_tool
+        runtime.set_tool_executor(mock_tool)
         ctx = runtime._build_context()
         await runtime._execute_tool_step(ctx)
         assert tool_called == ["called"]
@@ -67,7 +67,7 @@ class TestAgentRuntimeToolStep:
             tool_called.append("called")
             return {"role": "tool", "content": "result"}
 
-        runtime._tool_executor = mock_tool
+        runtime.set_tool_executor(mock_tool)
         ctx = runtime._build_context()
         await runtime._execute_tool_step(ctx)
         assert tool_called == []
@@ -83,7 +83,7 @@ class TestAgentRuntimeToolStep:
         async def mock_tool(ctx):
             return {"role": "tool", "content": "result"}
 
-        runtime._tool_executor = mock_tool
+        runtime.set_tool_executor(mock_tool)
         ctx = runtime._build_context()
         await runtime._execute_tool_step(ctx)
         assert runtime.status == "paused"
@@ -94,7 +94,6 @@ class TestAgentRuntimeToolStep:
         ctx = runtime._build_context()
         # 没有设置 tool_executor，不应报错
         await runtime._execute_tool_step(ctx)
-
 
 
 class TestAgentRuntimePauseFlow:

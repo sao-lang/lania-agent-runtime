@@ -21,7 +21,7 @@ from src.runtime._types import (
 )
 from src.runtime.context._serializer import DefaultSerializer, MessageSerializer
 from src.runtime.hooks._registry import HookRegistry
-from src.runtime.llm._models import FinishReason, LLMResponse
+from src.runtime.llm._models import FinishReason, LLMResponse, ToolCall
 from src.runtime.loops._types import StepResult, StepStatus
 
 if TYPE_CHECKING:
@@ -88,6 +88,7 @@ class StepRunner:
             HookPoint.BEFORE_TOOL, tool_call_request or {}, ctx
         )
         if isinstance(intercept_result, BlockAction):
+            controller.status = RuntimeStatus.ERROR
             return
         if isinstance(intercept_result, PauseAction):
             await controller.handle_pause(intercept_result)
@@ -96,10 +97,15 @@ class StepRunner:
         # Tool 调用
         if self._tool_executor is not None:
             tool_result = await self._tool_executor(ctx)
-            if isinstance(tool_result, dict):
-                messages.append(tool_result)
-            else:
-                messages.append({"role": "tool", "content": str(tool_result)})
+            # 兼容批量执行器（list[dict]）与单结果执行器（dict/str/None）
+            results = tool_result if isinstance(tool_result, list) else [tool_result]
+            for result in results:
+                if result is None:
+                    continue
+                if isinstance(result, dict):
+                    messages.append(result)
+                else:
+                    messages.append({"role": "tool", "content": str(result)})
 
             # after_tool transformers
             await self._hooks.run_transformers(HookPoint.AFTER_TOOL, tool_result, ctx)
@@ -140,8 +146,10 @@ class StepRunner:
         context_payload = controller.context_payload
         await self._hooks.run_transformers(HookPoint.BEFORE_LLM, context_payload, ctx)
 
-        # before_serialize transformers（仅在 dirty 时执行）
-        if context_payload.is_dirty:
+        # before_serialize transformers（仅在 dirty 时执行；assembled 时跳过）
+        # ContextAssemblerHook 预组装时优先消费 assembled_messages，跳过序列化，
+        # 但 BEFORE_LLM 拦截仍执行，保证治理组件可见。
+        if context_payload.assembled_messages is None and context_payload.is_dirty:
             await self._hooks.run_transformers(HookPoint.BEFORE_SERIALIZE, context_payload, ctx)
 
         # before_llm interceptors
@@ -149,13 +157,19 @@ class StepRunner:
             HookPoint.BEFORE_LLM, context_payload, ctx
         )
         if isinstance(intercept_result, BlockAction):
+            error_msg = f"请求被拦截: {intercept_result.reason}"
+            controller.messages.append({"role": "assistant", "content": error_msg})
+            controller.status = RuntimeStatus.ERROR
             return None
         if isinstance(intercept_result, PauseAction):
             await controller.handle_pause(intercept_result)
             return None
 
         # 序列化 ContextPayload → messages
-        if context_payload.is_dirty:
+        if context_payload.assembled_messages is not None:
+            controller.messages = list(context_payload.assembled_messages)
+            context_payload.assembled_messages = None
+        elif context_payload.is_dirty:
             serialized = await self._serializer.serialize(context_payload)
             if serialized:
                 controller.messages = (
@@ -178,15 +192,22 @@ class StepRunner:
         controller.last_llm_response = llm_response
 
         # after_llm transformers
-        await self._hooks.run_transformers(HookPoint.AFTER_LLM, llm_response, ctx)
+        transformed = await self._hooks.run_transformers(HookPoint.AFTER_LLM, llm_response, ctx)
 
         # after_llm interceptors
-        intercept_result = await self._hooks.run_interceptors(
-            HookPoint.AFTER_LLM, llm_response, ctx
-        )
+        intercept_result = await self._hooks.run_interceptors(HookPoint.AFTER_LLM, transformed, ctx)
         if isinstance(intercept_result, BlockAction):
             controller.status = RuntimeStatus.ERROR
             return None
+        if isinstance(intercept_result, AllowAction) and intercept_result.modified is not None:
+            modified = intercept_result.modified
+            if controller.messages and controller.messages[-1].get("role") == "assistant":
+                if isinstance(modified, LLMResponse):
+                    controller.messages[-1] = controller.llm_response_to_dict(modified)
+                elif isinstance(modified, dict):
+                    controller.messages[-1] = modified
+                elif isinstance(modified, str):
+                    controller.messages[-1]["content"] = modified
 
         # after_llm observers
         await self._hooks.run_observers(
@@ -225,8 +246,10 @@ class StepRunner:
         # before_llm transformers
         await self._hooks.run_transformers(HookPoint.BEFORE_LLM, context_payload, ctx)
 
-        # before_serialize transformers（仅在 dirty 时执行）
-        if context_payload.is_dirty:
+        # before_serialize transformers（仅在 dirty 时执行；assembled 时跳过）
+        # ContextAssemblerHook 预组装时优先消费 assembled_messages，跳过序列化，
+        # 但 BEFORE_LLM 拦截仍执行，保证治理组件可见。
+        if context_payload.assembled_messages is None and context_payload.is_dirty:
             await self._hooks.run_transformers(HookPoint.BEFORE_SERIALIZE, context_payload, ctx)
 
         # before_llm interceptors
@@ -249,8 +272,11 @@ class StepRunner:
                 status=StepStatus.PAUSED,
             )
 
-        # 序列化 ContextPayload → messages
-        if context_payload.is_dirty:
+        # 序列化 ContextPayload → messages（assembled 时直接使用预组装结果）
+        if context_payload.assembled_messages is not None:
+            controller.messages = list(context_payload.assembled_messages)
+            context_payload.assembled_messages = None
+        elif context_payload.is_dirty:
             serialized = await self._serializer.serialize(context_payload)
             if serialized:
                 controller.messages = (
@@ -276,13 +302,11 @@ class StepRunner:
         controller.append_llm_response(llm_response)
         controller.last_llm_response = llm_response
 
-        # after_llm transformers
-        await self._hooks.run_transformers(HookPoint.AFTER_LLM, llm_response, ctx)
+        # after_llm transformers（Transform 结果继续传给 Interceptor）
+        transformed = await self._hooks.run_transformers(HookPoint.AFTER_LLM, llm_response, ctx)
 
         # after_llm interceptors
-        intercept_result = await self._hooks.run_interceptors(
-            HookPoint.AFTER_LLM, llm_response, ctx
-        )
+        intercept_result = await self._hooks.run_interceptors(HookPoint.AFTER_LLM, transformed, ctx)
         if isinstance(intercept_result, BlockAction):
             controller.status = RuntimeStatus.ERROR
             return StepResult(
@@ -308,7 +332,11 @@ class StepRunner:
         )
 
         # === Phase 2: 工具调用（如果有） ===
+        # 批量执行语义：before_tool 拦截按单个工具执行（审批粒度保持在单个工具），
+        # 实际执行只调用一次 tool_executor，由批量执行器并行处理全部待执行调用，
+        # 避免同一批工具被重复执行 N 次。
         tool_calls = list(llm_response.tool_calls)
+        blocked_calls: list[ToolCall] = []
         for tc in tool_calls:
             # 重建 ctx：确保 ctx.messages 包含刚追加的 LLM 回复（含 tool_calls）
             fresh_ctx = controller.build_context()
@@ -319,6 +347,7 @@ class StepRunner:
                 HookPoint.BEFORE_TOOL, tool_ctx, fresh_ctx
             )
             if isinstance(intercept_result, BlockAction):
+                blocked_calls.append(tc)
                 continue
             if isinstance(intercept_result, PauseAction):
                 await controller.handle_pause(intercept_result)
@@ -327,23 +356,44 @@ class StepRunner:
                     status=StepStatus.PAUSED,
                 )
 
-            # Tool 调用
-            if self._tool_executor is not None:
-                tool_result = await self._tool_executor(fresh_ctx)
-                if isinstance(tool_result, dict):
-                    controller.messages.append(tool_result)
-                else:
-                    controller.messages.append({"role": "tool", "content": str(tool_result)})
+        # 被阻断的调用写入占位结果，避免批量执行器将其当作待执行调用重复执行
+        for tc in blocked_calls:
+            controller.messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": f"Tool call blocked: {tc.name}",
+                }
+            )
 
-                # after_tool transformers（用最新 ctx）
-                fresh_ctx2 = controller.build_context()
-                await self._hooks.run_transformers(HookPoint.AFTER_TOOL, tool_result, fresh_ctx2)
+        # Tool 调用：批量执行器一次处理全部待执行 tool_call；
+        # 全部被拦截时不执行，避免无效调用。
+        if tool_calls and self._tool_executor is not None and len(blocked_calls) < len(tool_calls):
+            fresh_ctx = controller.build_context()
+            tool_result = await self._tool_executor(fresh_ctx)
+
+            # 追加全部结果（兼容 list[dict] / dict / str / None）
+            results = tool_result if isinstance(tool_result, list) else [tool_result]
+            for result in results:
+                if result is None:
+                    continue
+                if isinstance(result, dict):
+                    controller.messages.append(result)
+                else:
+                    controller.messages.append({"role": "tool", "content": str(result)})
+
+            # after_tool transformers（用最新 ctx）
+            fresh_ctx2 = controller.build_context()
+            await self._hooks.run_transformers(HookPoint.AFTER_TOOL, tool_result, fresh_ctx2)
 
             # after_tool observers（用最新 ctx）
             fresh_ctx3 = controller.build_context()
             await self._hooks.run_observers(
                 HookPoint.AFTER_TOOL,
-                {"type": "after_tool", "tool_name": tc.name},
+                {
+                    "type": "after_tool",
+                    "tool_names": [tc.name for tc in tool_calls],
+                },
                 fresh_ctx3,
             )
 

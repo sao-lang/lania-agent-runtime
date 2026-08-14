@@ -83,7 +83,7 @@ class ToolDispatcher:
             ctx: RuntimeContext 实例。
 
         Returns:
-            工具执行结果消息字典，或 None（无待执行工具时）。
+            全部工具执行结果消息字典列表，或 None（无待执行工具时）。
         """
         # 从最近一条 assistant 消息提取所有待执行的 tool_calls
         tool_calls = self._extract_tool_calls(ctx)
@@ -96,8 +96,8 @@ class ToolDispatcher:
             return_exceptions=True,
         )
 
-        # 返回最后一条结果（兼容单 tool_call 场景的返回值格式）
-        # 实际所有结果会通过 _runtime 的 messages 追加写入
+        # 返回全部结果消息（每条 tool_call 对应一条 role=tool 消息）
+        result_messages: list[dict] = []
         for tc, result in zip(tool_calls, results):
             if isinstance(result, Exception):
                 logger.error(
@@ -106,16 +106,16 @@ class ToolDispatcher:
                     result,
                     exc_info=True,
                 )
-
-        # 取最后一条结果作为返回值（旧接口兼容）
-        last_result = results[-1] if results else None
-        if isinstance(last_result, Exception):
-            return {
-                "role": "tool",
-                "tool_call_id": tool_calls[-1].get("id", ""),
-                "content": f"Tool execution error: {last_result}",
-            }
-        return last_result
+                result_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content": f"Tool execution error: {result}",
+                    }
+                )
+            else:
+                result_messages.append(result)
+        return result_messages
 
     async def _execute_single_tool_call(self, tool_call: dict) -> dict:
         """
@@ -167,7 +167,8 @@ class ToolDispatcher:
         从 RuntimeContext 的消息中提取所有待处理的 tool_calls。
 
         按 role="assistant" 且包含 tool_calls 字段的消息反向查找，
-        返回所有 tool_call 条目。
+        返回所有尚未执行（无对应 role=tool 结果）的 tool_call 条目，
+        保证同一批工具调用不会被重复执行。
 
         Args:
             ctx: RuntimeContext 实例。
@@ -176,9 +177,18 @@ class ToolDispatcher:
             tool_call 字典列表（OpenAI 标准格式），可能为空。
         """
         messages = ctx.messages
-        for msg in reversed(messages):
-            if msg.get("role") == "assistant" and "tool_calls" in msg:
-                tool_calls = msg["tool_calls"]
-                if tool_calls:
-                    return tool_calls
+        for i in range(len(messages) - 1, -1, -1):
+            msg = messages[i]
+            if msg.get("role") != "assistant" or not msg.get("tool_calls"):
+                continue
+            pending: list[dict] = []
+            for tc in msg["tool_calls"]:
+                call_id = tc.get("id", "")
+                executed = any(
+                    m.get("role") == "tool" and m.get("tool_call_id") == call_id
+                    for m in messages[i + 1 :]
+                )
+                if not executed:
+                    pending.append(tc)
+            return pending
         return []

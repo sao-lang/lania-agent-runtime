@@ -7,9 +7,8 @@ AgentRuntime 核心类。
 
 from __future__ import annotations
 
-import logging
 import uuid
-from typing import TYPE_CHECKING, Any, AsyncIterator, cast
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from src.runtime._control import RuntimeController
 from src.runtime._engine_mixin import EngineSettersMixin
@@ -17,12 +16,9 @@ from src.runtime._helper_mixin import RuntimeHelperMixin
 from src.runtime._hook_mixin import HookRegistratorMixin
 from src.runtime._steps import StepRunner
 from src.runtime._types import (
-    AllowAction,
-    BlockAction,
     BudgetSnapshot,
     ExecutorFn,
     HookPoint,
-    PauseAction,
     PrimitiveType,
     RouterFn,
     RunResult,
@@ -38,8 +34,6 @@ from src.runtime.context._serializer import (
 from src.runtime.hooks._registry import HookRegistry
 from src.runtime.llm._models import FinishReason, LLMResponse
 from src.runtime.loops import LoopStrategy, LoopStrategyFactory
-
-logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from src.runtime.plugins._plugin import PluggableComponent
@@ -334,9 +328,11 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
         # 无 plan：基于上一步结果判断
         last_response = self._last_llm_response
 
-        # 如果上一步 LLM 请求了工具调用，走 tool 步骤
+        # 上一步 LLM 请求了工具调用：
+        #  - 仍有未执行的工具调用 → 走 tool 步骤
+        #  - 工具已执行完毕 → 继续 llm 步骤（避免同一批工具被重复执行）
         if last_response is not None and last_response.finish_reason == FinishReason.TOOL_CALLS:
-            return "tool"
+            return "tool" if self._has_pending_tool_calls() else "llm"
 
         # 如果 LLM 回复停止了，或发生了错误/截断，结束循环
         if last_response is not None:
@@ -347,164 +343,62 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
             return "llm"
         return "end"
 
+    def _has_pending_tool_calls(self) -> bool:
+        """
+        检查消息中是否存在尚未执行（无对应 tool 结果）的工具调用。
+
+        Returns:
+            存在待执行工具调用返回 True，否则 False。
+        """
+        messages = self._messages
+        for i in range(len(messages) - 1, -1, -1):
+            msg = messages[i]
+            if msg.get("role") != "assistant" or not msg.get("tool_calls"):
+                continue
+            call_ids = {tc.get("id") for tc in msg["tool_calls"]}
+            executed_ids = {
+                m.get("tool_call_id")
+                for m in messages[i + 1 :]
+                if m.get("role") == "tool" and m.get("tool_call_id") in call_ids
+            }
+            return not call_ids.issubset(executed_ids)
+        return False
+
     async def _execute_step(self, step_id: str, ctx: RuntimeContext) -> None:
         """
         执行指定 step。
+
+        统一委托给 StepRunner（唯一的单步执行实现），
+        此方法仅为外部循环控制（run_step）保留的兼容入口。
 
         Args:
             step_id: step 标识。
             ctx: RuntimeContext 快照。
         """
-        if step_id == "llm" and self._llm_executor is not None:
-            await self._execute_llm_step(ctx)
-        elif step_id == "tool" and self._tool_executor is not None:
+        if step_id == "tool":
             await self._execute_tool_step(ctx)
         else:
-            # plan 自定义 step_id（非 "llm"/"tool"）：默认走 LLM 步骤
-            logger.debug(
-                "_execute_step: plan step_id '%s' 映射为 llm 步骤",
-                step_id,
-            )
-            if self._llm_executor is not None:
-                await self._execute_llm_step(ctx)
+            # "llm" 及 plan 自定义 step_id 均走 LLM 步骤
+            await self._execute_llm_step(ctx)
 
     async def _execute_llm_step(self, ctx: RuntimeContext) -> None:
         """
-        执行 LLM step。
+        执行 LLM step（兼容入口）。
 
-        触发 before_llm Transform → before_serialize Transform
-        → before_llm Intercept → LLM → after_llm 流程。
-
-        同时兼容两种 LLM executor 接口：
-          - 新接口（LLMExecutor）：executor.execute(ctx) → LLMResponse
-          - 旧接口（ExecutorFn）：executor(ctx) → dict | str
+        统一委托给 StepRunner.run_llm_only —— 唯一的单步执行实现，
+        此方法仅为外部循环控制（run_step）保留的薄包装。
         """
-        # before_llm transformers（Context assembly, RAG, Token mgmt）
-        await self._hooks.run_transformers(HookPoint.BEFORE_LLM, self._context_payload, ctx)
-
-        # 检查 ContextAssemblerHook 是否已组装好 messages
-        if self._context_payload.assembled_messages is not None:
-            self._messages = list(self._context_payload.assembled_messages)
-            self._context_payload.assembled_messages = None  # 消费后重置
-        else:
-            # before_serialize transformers（仅在 dirty 时执行）
-            if self._context_payload.is_dirty:
-                await self._hooks.run_transformers(
-                    HookPoint.BEFORE_SERIALIZE, self._context_payload, ctx
-                )
-
-            # before_llm interceptors
-            intercept_result = await self._hooks.run_interceptors(
-                HookPoint.BEFORE_LLM, self._context_payload, ctx
-            )
-            if isinstance(intercept_result, BlockAction):
-                self.status = RuntimeStatus.ERROR
-                error_msg = f"请求被拦截: {intercept_result.reason}"
-                self._messages.append({"role": "assistant", "content": error_msg})
-                self._error_state["last_error"] = RuntimeError(error_msg)
-                self._error_state["consecutive_errors"] += 1
-                return
-            if isinstance(intercept_result, PauseAction):
-                await self._handle_pause(intercept_result)
-                return
-
-            # 序列化 ContextPayload → messages
-            if self._context_payload.is_dirty:
-                serialized = await self._serializer.serialize(self._context_payload)
-                if serialized:
-                    self._messages = (
-                        [serialized[0]] + self._messages[1:] if self._messages else serialized
-                    )
-
-        # LLM 调用（兼容新旧接口）
-        executor = self._llm_executor
-        if executor is None:
-            return
-
-        # 检测是否为 LLMExecutor 新接口（有 .execute 方法）
-        if hasattr(executor, "execute"):
-            llm_response: LLMResponse = await cast(Any, executor).execute(ctx)
-        else:
-            # 旧接口：ExecutorFn 直接调用
-            raw = await cast(Any, executor)(ctx)
-            llm_response = self._legacy_to_llm_response(raw)
-
-        # 追加 LLM 回复到消息列表
-        self._append_llm_response(llm_response)
-
-        # 保存最后响应供 Transform / Interceptor / Router 使用
-        self._last_llm_response = llm_response
-
-        # 重建 ctx，使 after_llm hooks 能看到最新 messages
-        ctx = self._build_context()
-
-        # after_llm transformers（预算记账等，Transform 管线统一处理）
-        after_data = await self._hooks.run_transformers(HookPoint.AFTER_LLM, llm_response, ctx)
-
-        # after_llm interceptors（Output guardrails, Groundedness）
-        intercept_result = await self._hooks.run_interceptors(HookPoint.AFTER_LLM, after_data, ctx)
-        if isinstance(intercept_result, BlockAction):
-            self.status = RuntimeStatus.ERROR
-            return
-        if isinstance(intercept_result, AllowAction) and (intercept_result.modified is not None):
-            # 替换最后一条 assistant 消息
-            modified = intercept_result.modified
-            if self._messages and (self._messages[-1].get("role") == "assistant"):
-                if isinstance(modified, LLMResponse):
-                    self._messages[-1] = self._llm_response_to_dict(modified)
-                elif isinstance(modified, dict):
-                    self._messages[-1] = modified
-                elif isinstance(modified, str):
-                    self._messages[-1]["content"] = modified
-
-        # after_llm observers
-        await self._hooks.run_observers(
-            HookPoint.AFTER_LLM,
-            {"type": "after_llm", "response": llm_response},
-            ctx,
-        )
+        await self._step_runner.run_llm_only(ctx, self._controller)
 
     async def _execute_tool_step(self, ctx: RuntimeContext) -> None:
         """
-        执行 Tool step。
+        执行 Tool step（兼容入口）。
 
-        触发 before_tool → Tool 调用 → after_tool 流程。
+        统一委托给 StepRunner.run_tool_step —— 唯一的单步执行实现，
+        此方法仅为外部循环控制（run_step）保留的薄包装。
         """
-        # 重建 ctx：确保 ctx.messages 包含上一步 LLM 回复（含 tool_calls）
-        # 因为 _default_loop 在 LLM 调用后未重建上下文
-        fresh_ctx = self._build_context()
-
-        # before_tool interceptors
-        intercept_result = await self._hooks.run_interceptors(
-            HookPoint.BEFORE_TOOL,
+        await self._step_runner.run_tool_step(
             self._context_payload.tool_call_request or {},
-            fresh_ctx,
+            self._messages,
+            self._controller,
         )
-        if isinstance(intercept_result, BlockAction):
-            self.status = RuntimeStatus.ERROR
-            return
-        if isinstance(intercept_result, PauseAction):
-            await self._handle_pause(intercept_result)
-            return
-
-        # Tool 调用
-        if self._tool_executor is not None:
-            tool_result = await self._tool_executor(fresh_ctx)
-
-            # 追加工具结果到消息列表
-            if isinstance(tool_result, dict):
-                self._messages.append(tool_result)
-            else:
-                self._messages.append({"role": "tool", "content": str(tool_result)})
-
-            # after_tool transformers
-            await self._hooks.run_transformers(HookPoint.AFTER_TOOL, tool_result, ctx)
-
-        # after_tool observers
-        await self._hooks.run_observers(
-            HookPoint.AFTER_TOOL,
-            {"type": "after_tool"},
-            ctx,
-        )
-
-

@@ -64,7 +64,7 @@ class ContextPayload:
     assembled_messages: list | None = None
     """ContextAssemblerHook 预组装的 LLM 消息列表。
 
-    不为 None 时，Runtime 的 _execute_llm_step 直接使用此字段，
+    不为 None 时，Runtime 的 StepRunner 直接使用此字段，
     跳过 BEFORE_SERIALIZE 和 serialize 步骤，避免重复序列化。
     """
 

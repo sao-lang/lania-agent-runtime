@@ -712,6 +712,8 @@ class TestToolDispatcherMCPIntegration:
                     },
                 ),
             )
-            result = await dispatcher.dispatch(ctx)
-            assert result is not None
+            results = await dispatcher.dispatch(ctx)
+            assert results is not None
+            assert len(results) == 1
+            result = results[0]
             assert "执行错误" in result["content"]

@@ -151,7 +151,7 @@ class TestRuntimeEdgeCases:
         async def mock_tool(ctx):
             return "tool_result"
 
-        runtime._tool_executor = mock_tool
+        runtime.set_tool_executor(mock_tool)
         runtime._context_payload.tool_call_request = {"name": "test"}
         ctx = runtime._build_context()
         await runtime._execute_tool_step(ctx)
@@ -238,7 +238,7 @@ class TestRuntimeEdgeCases:
         async def mock_tool(ctx):
             return {"role": "tool", "content": "tool_result"}
 
-        runtime._tool_executor = mock_tool
+        runtime.set_tool_executor(mock_tool)
         ctx = runtime._build_context()
 
         # 手动设置 tool_call_request

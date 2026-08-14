@@ -39,7 +39,7 @@ class ContextAssemblerHook:
         Transform 调用入口。
 
         执行五阶段管线并将组装好的 messages 存入
-        data.assembled_messages，供 Runtime 的 _execute_llm_step
+        data.assembled_messages，供 Runtime 的 StepRunner
         在序列化阶段直接使用。
 
         Args:

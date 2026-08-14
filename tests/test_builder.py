@@ -145,27 +145,28 @@ class TestRuntimeBuilder:
 
     async def test_loop_config_by_name(self) -> None:
         """通过名称字符串配置 loop 策略。"""
-        runtime = (
-            RuntimeBuilder().system_prompt("助手").loop("plan_and_execute").build()
-        )
+        runtime = RuntimeBuilder().system_prompt("助手").loop("plan_and_execute").build()
         from src.runtime.loops._plan_execute import PlanExecuteLoop
+
         assert isinstance(runtime._loop, PlanExecuteLoop)
 
     async def test_loop_config_with_instance(self) -> None:
         """直接注入 LoopStrategy 实例。"""
         from unittest.mock import MagicMock
+
         from src.runtime.loops import ReActLoop
 
         hooks = MagicMock()
         step_runner = MagicMock()
         controller = MagicMock()
         my_loop = ReActLoop(
-            hooks=hooks, step_runner=step_runner, controller=controller, max_iterations=20,
+            hooks=hooks,
+            step_runner=step_runner,
+            controller=controller,
+            max_iterations=20,
         )
 
-        runtime = (
-            RuntimeBuilder().system_prompt("助手").loop(my_loop).build()
-        )
+        runtime = RuntimeBuilder().system_prompt("助手").loop(my_loop).build()
         assert runtime._loop is my_loop
         assert runtime._loop._max_iterations == 20
 
@@ -173,6 +174,7 @@ class TestRuntimeBuilder:
         """不传 loop 参数时默认使用 ReActLoop。"""
         runtime = RuntimeBuilder().system_prompt("助手").build()
         from src.runtime.loops._react import ReActLoop
+
         assert isinstance(runtime._loop, ReActLoop)
 
     async def test_hooks_registry(self) -> None:

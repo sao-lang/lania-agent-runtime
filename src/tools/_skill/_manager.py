@@ -198,10 +198,14 @@ class SkillManager:
             return SkillConfig(name=default_name)
 
         try:
-            import tomli
+            # Python 3.11+ 使用标准库 tomllib，3.10 回退到 tomli
+            try:
+                import tomllib
+            except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
+                import tomli as tomllib
 
             with open(toml_path, "rb") as f:
-                data = tomli.load(f)
+                data = tomllib.load(f)
 
             skill_data = data.get("skill", {})
             return SkillConfig(

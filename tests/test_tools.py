@@ -253,8 +253,10 @@ class TestToolDispatcher:
                 },
             ),
         )
-        result = await dispatcher.dispatch(ctx)
-        assert result is not None
+        results = await dispatcher.dispatch(ctx)
+        assert results is not None
+        assert len(results) == 1
+        result = results[0]
         assert result["role"] == "tool"
         assert result["tool_call_id"] == "call_1"
         assert result["content"] == "5"
@@ -278,8 +280,10 @@ class TestToolDispatcher:
                 },
             ),
         )
-        result = await dispatcher.dispatch(ctx)
-        assert result is not None
+        results = await dispatcher.dispatch(ctx)
+        assert results is not None
+        assert len(results) == 1
+        result = results[0]
         assert result["content"] == "30"
 
     async def test_dispatch_no_tool_call(self) -> None:
@@ -318,9 +322,55 @@ class TestToolDispatcher:
                 },
             ),
         )
-        result = await dispatcher.dispatch(ctx)
-        assert result is not None
+        results = await dispatcher.dispatch(ctx)
+        assert results is not None
+        assert len(results) == 1
+        result = results[0]
         assert "未找到" in result["content"] or "错误" in result["content"]
+
+    async def test_dispatch_multiple_tool_calls(self) -> None:
+        """一次响应多个 tool_call：全部执行且各自返回结果，不重复执行。"""
+        registry = ToolRegistry()
+        registry.register(_make_calc_spec())
+        registry.register(_make_greet_spec())
+        dispatcher = ToolDispatcher(tool_registry=registry)
+
+        from src.runtime.context._context import RuntimeContext
+
+        ctx = RuntimeContext(
+            messages=(
+                {"role": "user", "content": "计算并问候"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "calculator", "arguments": '{"a": 2, "b": 3}'},
+                        },
+                        {
+                            "id": "call_2",
+                            "type": "function",
+                            "function": {
+                                "name": "greet",
+                                "arguments": '{"user_name": "World"}',
+                            },
+                        },
+                    ],
+                },
+            ),
+        )
+        results = await dispatcher.dispatch(ctx)
+        assert results is not None
+        assert len(results) == 2
+        by_id = {r["tool_call_id"]: r["content"] for r in results}
+        assert by_id == {"call_1": "5", "call_2": "Hello, World!"}
+
+        # 幂等：结果写入消息历史后，同一批 tool_call 不会被再次提取执行
+        ctx_with_results = RuntimeContext(messages=ctx.messages + tuple(results))
+        again = await dispatcher.dispatch(ctx_with_results)
+        assert again is None
 
 
 class TestToolRuntimeIntegration:
@@ -412,6 +462,85 @@ class TestToolRuntimeIntegration:
         # 验证 before_llm Transform 已注入 tools_schema
         handlers = runtime._hooks.list(HookPoint.BEFORE_LLM)
         assert any(h.name == "_tools_schema_refresh" for h in handlers)
+
+    async def test_runtime_multiple_tool_calls_executed_once(self) -> None:
+        """LLM 一次返回多个 tool_call：每个工具只执行一次，结果全部写入历史。"""
+        from src.runtime.llm._models import FinishReason, LLMResponse, ToolCall
+
+        calc_calls: list[int] = []
+        greet_calls: list[int] = []
+
+        async def counting_calc(a: int, b: int, operation: str = "add") -> int:
+            calc_calls.append(1)
+            return await _calc_handler(a, b, operation)
+
+        async def counting_greet(user_name: str, greeting: str = "Hello") -> str:
+            greet_calls.append(1)
+            return await _greet_handler(user_name, greeting)
+
+        registry = ToolRegistry()
+        registry.register(
+            ToolSpec(
+                name="calculator",
+                description="简单计算器",
+                parameters={
+                    "a": {"type": "integer"},
+                    "b": {"type": "integer"},
+                },
+                handler=counting_calc,
+                required=["a", "b"],
+            )
+        )
+        registry.register(
+            ToolSpec(
+                name="greet",
+                description="问候用户",
+                parameters={"user_name": {"type": "string"}},
+                handler=counting_greet,
+                required=["user_name"],
+            )
+        )
+
+        runtime = RuntimeBuilder().system_prompt("你是一个助手").tool_registry(registry).build()
+
+        llm_calls = 0
+
+        async def tool_calls_llm(ctx):
+            nonlocal llm_calls
+            llm_calls += 1
+            if llm_calls == 1:
+                return LLMResponse(
+                    content="",
+                    finish_reason=FinishReason.TOOL_CALLS,
+                    tool_calls=[
+                        ToolCall(
+                            id="c1",
+                            name="calculator",
+                            arguments={"a": 2, "b": 3},
+                            raw_arguments='{"a": 2, "b": 3}',
+                        ),
+                        ToolCall(
+                            id="c2",
+                            name="greet",
+                            arguments={"user_name": "World"},
+                            raw_arguments='{"user_name": "World"}',
+                        ),
+                    ],
+                )
+            return LLMResponse(content="done", finish_reason=FinishReason.STOP)
+
+        runtime.set_llm_executor(tool_calls_llm)
+        result = await runtime.run("帮我计算并问候")
+
+        # 每个工具只执行一次
+        assert calc_calls == [1]
+        assert greet_calls == [1]
+        # 两个工具结果都写入消息历史
+        tool_msgs = [m for m in runtime._messages if m.get("role") == "tool"]
+        assert len(tool_msgs) == 2
+        by_id = {m["tool_call_id"]: m["content"] for m in tool_msgs}
+        assert by_id == {"c1": "5", "c2": "Hello, World!"}
+        assert result.content == "done"
 
 
 class TestToolRuntimeBuilderIntegration:

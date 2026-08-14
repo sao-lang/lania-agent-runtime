@@ -215,3 +215,94 @@ class TestStepRunner:
         assert result is None
 
         await runner.run_tool_step(None, [], ctl)
+
+    async def test_step_runner_multiple_tool_calls_executed_once(self) -> None:
+        """一次响应多个 tool_call：tool_executor 只调用一次，全部结果追加。"""
+        from src.runtime.llm._models import FinishReason, LLMResponse, ToolCall
+
+        hooks = HookRegistry()
+        runtime = AgentRuntime(system_prompt="助手")
+        executed: list[str] = []
+
+        async def mock_llm(ctx):
+            return LLMResponse(
+                content="",
+                finish_reason=FinishReason.TOOL_CALLS,
+                tool_calls=[
+                    ToolCall(id="c1", name="t1"),
+                    ToolCall(id="c2", name="t2"),
+                ],
+            )
+
+        async def mock_tool(ctx):
+            executed.append("called")
+            return [
+                {"role": "tool", "tool_call_id": "c1", "content": "r1"},
+                {"role": "tool", "tool_call_id": "c2", "content": "r2"},
+            ]
+
+        runner = StepRunner(
+            hooks=hooks,
+            llm_executor=mock_llm,
+            tool_executor=mock_tool,
+        )
+        ctl = RuntimeController(runtime)
+        ctx = ctl.build_context()
+
+        step_result = await runner.run_step(ctx, ctl)
+
+        # 批量执行器只调用一次，避免同一批工具被重复执行
+        assert executed == ["called"]
+        tool_msgs = [m for m in ctl.messages if m.get("role") == "tool"]
+        assert [m["tool_call_id"] for m in tool_msgs] == ["c1", "c2"]
+        assert step_result.finish_reason == FinishReason.TOOL_CALLS
+
+    async def test_step_runner_tool_calls_partially_blocked(self) -> None:
+        """部分 tool_call 被拦截：被拦截项写入占位结果，其余正常执行。"""
+        from src.runtime.llm._models import FinishReason, LLMResponse, ToolCall
+
+        hooks = HookRegistry()
+        runtime = AgentRuntime(system_prompt="助手")
+        executed: list[str] = []
+
+        async def block_t2(data, ctx):
+            if data.get("tool_name") == "t2":
+                return BlockAction(reason="t2 blocked")
+            return None
+
+        hooks.register(
+            HookPoint.BEFORE_TOOL,
+            block_t2,
+            primitive=PrimitiveType.INTERCEPT,
+        )
+
+        async def mock_llm(ctx):
+            return LLMResponse(
+                content="",
+                finish_reason=FinishReason.TOOL_CALLS,
+                tool_calls=[
+                    ToolCall(id="c1", name="t1"),
+                    ToolCall(id="c2", name="t2"),
+                ],
+            )
+
+        async def mock_tool(ctx):
+            executed.append("called")
+            return [{"role": "tool", "tool_call_id": "c1", "content": "r1"}]
+
+        runner = StepRunner(
+            hooks=hooks,
+            llm_executor=mock_llm,
+            tool_executor=mock_tool,
+        )
+        ctl = RuntimeController(runtime)
+        ctx = ctl.build_context()
+
+        await runner.run_step(ctx, ctl)
+
+        assert executed == ["called"]
+        tool_msgs = [m for m in ctl.messages if m.get("role") == "tool"]
+        assert len(tool_msgs) == 2
+        by_id = {m["tool_call_id"]: m["content"] for m in tool_msgs}
+        assert by_id["c1"] == "r1"
+        assert "blocked" in by_id["c2"]
