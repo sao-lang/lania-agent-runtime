@@ -1,3 +1,15 @@
+### 2026-08-15
+
+#### 1. Session 组件设计文档 v2：唯一事实源 + 零耦合边界
+
+- **时间：** 2026-08-15 04:38:19
+- **发起人：** user
+- **修改文件：**
+  - `docs/design/session-component-design.md` — 重写为 v2（删除 v1，替换为"唯一事实源 + 零耦合"方案）
+- **修改内容：** 根据"Session / Memory / Context 三组件是否有功能重叠"的讨论结论更新设计文档：(1) 明确 Session 是完整原始消息历史的唯一事实源，Memory L1/L2 不再存储消息原文（`WorkingMemorySnapshot.messages`、`EpisodicMemoryEntry.raw_content` 标记 `@deprecated v2`），Context 保持纯编排不持有数据；(2) 新增零耦合约束：组件间运行期零导入（`src/session` 不 import `src/memory`/`src/context`，对 `src.runtime` 仅 TYPE_CHECKING），唯一接线点在 `RuntimeBuilder`，共享 persistence 实例按 key 前缀隔离、不构成耦合；(3) 修正 v1 审查问题：`ctx.services` 浅拷贝不可写（改为 SessionService 内存缓存）、session_id 无注入入口（AgentRuntime + Builder 增加 `session_id`）、续聊 turn_index 重置（持久化并恢复 `step_index`，新增 `set_step_index` writer）、TTL 不生效（SessionService 内置过期）、新增 SessionCommitHook 逐轮提交原文以支撑崩溃恢复。
+- **复盘结果：** 纯文档变更，无代码改动；方案已按项目惯例（协议解耦、Hook 插拔、Runtime 纯壳）对齐。
+- **潜在风险：** 设计仍处 Phase 1 规划阶段，尚未实现；Memory 侧字段废弃为破坏性变更，实现时需同步更新 memory-system-design.md 与相关测试。
+
 ### 2026-07-27
 
 #### 2. Code Review 驱动修复：闭包变量风险 + lint 清理
