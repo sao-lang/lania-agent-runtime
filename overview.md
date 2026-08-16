@@ -17,6 +17,15 @@
 - **复盘结果：** 886 测试通过（875 → 886），覆盖率 96.27%（≥96），ruff check/format 零报错（仅预存 test_workflow_intent.py N817）；`_factory.py` 100% 覆盖。
 - **潜在风险：** ① `from_config` 的 `config.loop` 此前被静默忽略，现真正生效——含 strategy 但缺必需构造参数（如 workflow 缺 workflow_definition）会在 build 时报错而非忽略；② 保留参数名 hooks/step_runner/controller/router 不可通过 kwargs 覆盖（重复传参会 TypeError）；③ `LoopStrategyFactory.available()` 仅列出已注册名称，内置名称在首次 create 前不列出。
 
+#### 9. 文档：护栏方案落实为 v0.2
+
+- **时间：** 2026-08-16 23:30:00
+- **发起人：** user
+- **修改文件：**
+  - `docs/design/governance-component-design.md` — v0.1 → v0.2 落实版
+- **修改内容：** 补齐职责边界与状态分层（R7）、零耦合依赖矩阵与验证清单（§3）、原语链执行语义代码依据（§5.2）、各子组件完整规格（Config 字段/协议/行为/状态/异常/测试，§6）、一次 run() 协作时序（§7）、与接入层网关的分工契约（§8，审计单一出口/审批 resume/限流分工）、配置 YAML 示例（§9）、风险与缓解表（§13）、决策 D1-D4 选项与推荐理由（§14）、文件清单与修订记录。
+- **复盘结果：** N/A（纯设计文档，未编码）
+- **潜在风险：** 决策 D1-D4 待用户确认后开始实现；工作区存在另一条工作线的未提交改动（LoopStrategy 工厂/Builder 类注册），本次提交未涉及。
 #### 8. 文档：护栏（治理）组件封装方案
 
 - **时间：** 2026-08-16 23:10:00
