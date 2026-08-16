@@ -1,5 +1,31 @@
 ### 2026-08-16
 
+#### 8. Loop 策略框架化改造：默认注册移出 Runtime + 工厂/Builder 开放扩展
+
+- **时间：** 2026-08-16 23:10:00
+- **发起人：** user
+- **修改文件：**
+  - `src/runtime/loops/_factory.py` — 注册表支持工厂函数（策略类或 Callable）；内置三策略懒注册（create 兜底、幂等、不覆盖用户同名注册）
+  - `src/runtime/_runtime.py` — 删除 `_register_default_strategies()` 调用；新增 `loop_strategy_cls` / `loop_kwargs`，装配顺序 实例 > 类 > 名称
+  - `src/runtime/_helper_mixin.py` — 删除 `_register_default_strategies()` 方法与无用 import
+  - `src/runtime/_builder.py` — `.loop()` 接受 `str | type[LoopStrategy] | LoopStrategy`，kwargs 透传策略构造；`from_config` 真正应用 `config.loop`
+  - `src/runtime/config/_runtime_config.py` — loop 字段文档口径修正（max_steps → max_iterations）
+  - `src/runtime/loops/__init__.py` — 模块 docstring 更新为"内置 3 种 + 开放注册"
+  - `tests/test_loop_factory.py` — 新增 11 个用例
+  - `README.md`、`docs/design/loop-strategy-design.md`、`overview.md`、`grill-self-review.md`
+- **修改内容：** 针对"Loop 策略不止三种"的框架化诉求：默认装配从 AgentRuntime 核心移入 loops 子系统（工厂 create 懒注册），Runtime 只依赖 LoopStrategy 抽象与工厂接口；工厂注册放宽为工厂函数；Builder kwargs 真正生效（顺带修复 README F3 `.loop(WorkflowLoop, workflow_definition=wf)` 文档承诺但不可用的问题）；`from_config` 的 loop 配置从"仅存 services"变为真正应用。
+- **复盘结果：** 886 测试通过（875 → 886），覆盖率 96.27%（≥96），ruff check/format 零报错（仅预存 test_workflow_intent.py N817）；`_factory.py` 100% 覆盖。
+- **潜在风险：** ① `from_config` 的 `config.loop` 此前被静默忽略，现真正生效——含 strategy 但缺必需构造参数（如 workflow 缺 workflow_definition）会在 build 时报错而非忽略；② 保留参数名 hooks/step_runner/controller/router 不可通过 kwargs 覆盖（重复传参会 TypeError）；③ `LoopStrategyFactory.available()` 仅列出已注册名称，内置名称在首次 create 前不列出。
+
+#### 8. 文档：护栏（治理）组件封装方案
+
+- **时间：** 2026-08-16 23:10:00
+- **发起人：** user
+- **修改文件：**
+  - `docs/design/governance-component-design.md` — 新增护栏组件封装方案（全治理 + 可插拔）
+- **修改内容：** 定义护栏组件域 `src/governance/` 的封装方案：对照 session/memory/context 组件范式，按能力（approval / budget / audit / ratelimit / critique / redact / permission）逐个封装；明确设计原则（Runtime 纯壳、零耦合、协议化后端、优先级契约、状态约束、兼容优先）、公共底座（优先级段位表 / 审计事件 / 异步任务组 / GovernanceConfig）、Builder 接线与配置驱动、兼容迁移策略、实施顺序与验收标准。
+- **复盘结果：** N/A（纯设计文档，未实现）
+- **潜在风险：** 待确认决策 D1-D4（启动入口 / Critique 重试机制 / 后台任务组位置 / 预算 cost 维度）确认后才能开始实现。
 #### 7. 文档：编排高级模式标记为暂缓/按需
 
 - **时间：** 2026-08-16 22:45:00
@@ -463,3 +489,4 @@
 - **修改内容：** 按照 agent-runtime-design.md 架构设计，实现 Runtime 核心骨架，包含 AgentRuntime、HookRegistry、Pipeline、ContextPayload、RuntimeContext、MessageSerializer、PluggableComponent/Plugin、RuntimeConfig 等模块。
 - **复盘结果：** 171 个测试全部通过，覆盖率 96.30%，ruff lint/format 零报错。
 - **潜在风险：** 部分高级功能（LLMExecutor 具体适配器、LoopStrategy、ContextManager 五阶段管线）尚未实现，需要后续子模块补充。
+
