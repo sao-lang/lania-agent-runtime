@@ -8,6 +8,7 @@ Builder 并列注册 Resume Hooks。
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -300,6 +301,13 @@ class TestListUserSessionsPagination:
         await service.update_status("s2", "ended")
         await service.create("s3", user_id="u1")
         await service.update_status("s3", "ended")
+        # 显式打点时间，保证 updated_at 倒序断言确定（避免同毫秒并列）
+        now = datetime.now()
+        for session_id, offset in (("s3", 0), ("s2", 1), ("s1", 2)):
+            record = await service.get(session_id)
+            assert record is not None
+            record.updated_at = now - timedelta(seconds=offset)
+            await service._store.save_record(record)
         ended = await service.list_user_sessions("u1", status="ended")
         assert [s.session_id for s in ended] == ["s3", "s2"]  # updated_at 倒序
         active = await service.list_user_sessions("u1", status="active")
