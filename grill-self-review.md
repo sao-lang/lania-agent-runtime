@@ -1,3 +1,32 @@
+## 第十七轮自省（2026-08-16）：Loop 策略框架化改造（默认注册移出 Runtime + 工厂/Builder 开放扩展）
+
+### 触发条件
+✅ 改 ≥3 文件 / 架构决策 / 基础设施变更
+
+### 四大维度自省
+
+**✅ 功能完整性**
+- checklist 9 项全部落地：工厂支持工厂函数注册；内置三策略懒注册移入 loops 子系统；AgentRuntime 新增 `loop_strategy_cls` / `loop_kwargs`（装配顺序 实例 > 类 > 名称）；Builder `.loop()` 类传参 + kwargs 透传；`from_config` 应用 `config.loop`；docstring / README / 设计文档同步；11 个新测试；ruff + 全量测试 + 覆盖率验证通过；overview 记录。
+
+**✅ 功能间联通**
+- `_register_default_strategies` 无残留引用；`_helper_mixin` 无用 import 已删；Runtime 只依赖 LoopStrategy 抽象与工厂接口；`clear()` 后直接构造 AgentRuntime 仍可用（create 懒注册兜底），既有 test_loops 工厂清空测试语义不变。
+
+**✅ 模块间联通**
+- 工厂注册表值类型放宽为 Callable 后，既有 register(类) 调用全部兼容；Builder 新增字段不影响其他链路；README F3 类传参从"文档承诺但不可用"修复为真实可用。
+
+**✅ 可用性**
+- 886 测试通过（875 → 886）、覆盖率 96.27%、ruff check 零报错（仅预存 N817）、ruff format 全干净；`_factory.py` 100% 覆盖。
+
+### 发现的问题与处置
+| # | 问题 | 严重度 | 处置 |
+|---|------|--------|------|
+| G7 | README F4 代码块缺少开头 ```python 围栏，F4 内容会以纯文本渲染（`# F4` 变成 H1 标题） | 中等 | 已补围栏，README 围栏数平衡（26 条） |
+| G8 | `from_config` 的 `config.loop` 从"静默忽略"变为"真正生效"，含 strategy 但缺必需参数会在 build 时报错 | 轻微 | 有意的缺陷修复，文档注明风险 |
+
+### 最终状态
+✅ 默认装配移出 Runtime、自定义策略（类 / 工厂函数 / 名称 + kwargs）成为一等公民；全量验证通过。
+
+---
 ## 第十六轮自省（2026-08-16）：WorkflowLoop max_iterations 安全网
 
 ### 触发条件
@@ -445,3 +474,4 @@
 | M13 | `user_id` 为 None 只写情景记忆 | 设计如此，需文档说明 |
 | M15 | `build()` 不校验 memory_service 协议 | 运行时 Duck Typing，Python 惯用方式 |
 | M17-M18 | `type: ignore`/`Any` | 长期逐步清理 |
+

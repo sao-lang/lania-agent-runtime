@@ -58,6 +58,13 @@ src/
 - **不引入新概念**：三种策略覆盖所有需求，Multi-Agent / HITL 通过现有机制（Agent-as-tool / Intercept pause）实现
 - **单一职责**：策略只管"循环怎么走"，不管"单步怎么做"——单步逻辑（hook 编排、LLM 调用、工具执行）由 `StepRunner` 封装
 
+> **扩展性（2026-08-16 修订）**：内置三种策略是默认实现，不是封闭集合。
+> `LoopStrategyFactory` 支持注册策略类或工厂函数（`register(name, factory)`），
+> 按名创建时通过 `**kwargs` 透传策略构造参数；内置三种在首次 `create()` 时懒注册
+> （幂等，不覆盖用户同名注册）。默认注册归属 loops 子系统，Runtime 只依赖
+> `LoopStrategy` 抽象与工厂接口，不感知具体策略类。自定义策略只需实现
+> `LoopStrategy` ABC（`run` / `run_stream`）即可接入。
+
 ### StepRunner —— 单步执行单元
 
 `StepRunner` 封装"一次 LLM 调用 + 可能的工具调用"的完整单步逻辑，被三种 LoopStrategy 共享：
@@ -537,3 +544,4 @@ hooks.intercept(BEFORE_TOOL, HumanApprovalInterceptor(
 ))
 runtime = AgentRuntime(llm_executor=executor, hooks=hooks)
 ```
+

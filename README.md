@@ -175,9 +175,9 @@ asyncio.run(main())
 > ⚠️ `HumanApprovalPlugin` / `BudgetPlugin` / `AuditPlugin` 等插件化封装规划中（治理能力已内置为 Hook）。
 > 当前内置治理组件：`HumanApprovalInterceptor` / `SelfCritiqueHook` / `DualModelCritiqueHook` / `ReplanHook` / 预算记账。
 
-### 模式 F：Loop 策略（3 种，Builder 一行切换）
+### 模式 F：Loop 策略（内置 3 种 + 自定义扩展）
 
-AgentRuntime 提供三种可插拔的 Loop 策略，通过 `.loop()` 一行切换：
+AgentRuntime 内置三种 Loop 策略，通过 `.loop()` 一行切换；也支持注册自定义策略（见 F4）：
 
 ```python
 from src.runtime import AgentRuntime
@@ -224,12 +224,43 @@ agent = (AgentRuntime.builder()
 await agent.set_loop_strategy("workflow")         # 按名称切换
 ```
 
+```python
+# F4: 自定义 Loop 策略 —— 策略集合不限于内置三种
+from src.runtime.loops import LoopStrategy, LoopStrategyFactory
+
+# 实现 LoopStrategy ABC（run / run_stream），构造参数按需自定义
+class MyLoop(LoopStrategy):
+    def __init__(self, hooks, step_runner, controller, router=None, answer: str = "ok"):
+        super().__init__(hooks, step_runner, controller, router)
+        self._answer = answer
+
+    async def run(self, ctx): ...
+    async def run_stream(self, ctx): ...
+
+# 注册到工厂：策略类或工厂函数均可
+LoopStrategyFactory.register("my_loop", MyLoop)
+
+# 按名使用，kwargs 透传给构造函数
+agent = (AgentRuntime.builder()
+    .system_prompt("你是助手。")
+    .llm(model="gpt-4o", api_key="sk-...")
+    .loop("my_loop", answer="你好")   # ← answer 透传给 MyLoop
+    .build())
+
+# 或直接传策略类（构造时自动注入 hooks/step_runner/controller/router）
+agent = (AgentRuntime.builder()
+    .system_prompt("你是助手。")
+    .llm(model="gpt-4o", api_key="sk-...")
+    .loop(MyLoop, answer="你好")
+    .build())
+```
+
 > **参数说明**：
 > - `ReActLoop`: `max_iterations`（默认 10）
 > - `PlanExecuteLoop`: `max_replans`（默认 3）、`max_iterations`（默认 20）、`planner_prompt`
 > - `WorkflowLoop`: 通过 `WorkflowDefinition` 配置节点、边、条件
 >
-> 不传 `.loop()` 时默认使用 `ReActLoop`。
+> `.loop()` 支持三种传参方式：策略名称、策略类、策略实例；按类/按名称时其余关键字参数透传给策略构造函数。不传 `.loop()` 时默认使用 `ReActLoop`。
 
 ### 模式 G：意图路由（WorkflowLoop + 分类器）
 
@@ -476,3 +507,5 @@ uv build
 ## 📄 许可证
 
 MIT
+
+

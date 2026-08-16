@@ -37,7 +37,7 @@ class RuntimeConfig:
     """LLM 配置（model, api_key, base_url, max_tokens 等）。"""
 
     loop: dict[str, Any] = field(default_factory=dict)
-    """Step loop 配置（strategy, max_steps, max_replans 等）。"""
+    """Step loop 配置（strategy, max_iterations, max_replans 等）。"""
 
     memory: dict[str, Any] = field(default_factory=dict)
     """记忆系统配置（backend, path 等）。"""

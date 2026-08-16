@@ -24,7 +24,6 @@ from src.runtime.config._runtime_config import RuntimeConfig
 from src.runtime.context._context import RuntimeContext
 from src.runtime.context._payload import ContextPayload
 from src.runtime.llm._models import FinishReason, LLMResponse, LLMUsage
-from src.runtime.loops import LoopStrategyFactory
 
 if TYPE_CHECKING:
     from src.runtime._builder import RuntimeBuilder
@@ -134,23 +133,6 @@ class RuntimeHelperMixin:
             }
         )
         self.status = RuntimeStatus.PAUSED
-
-    def _register_default_strategies(self) -> None:
-        """
-        注册默认的 LoopStrategy 到工厂。
-
-        不在模块级自动注册以避免循环导入。
-        """
-        from src.runtime.loops._plan_execute import PlanExecuteLoop
-        from src.runtime.loops._react import ReActLoop
-        from src.runtime.loops._workflow import WorkflowLoop
-
-        if "react" not in LoopStrategyFactory._registry:
-            LoopStrategyFactory.register("react", ReActLoop)
-        if "plan_and_execute" not in LoopStrategyFactory._registry:
-            LoopStrategyFactory.register("plan_and_execute", PlanExecuteLoop)
-        if "workflow" not in LoopStrategyFactory._registry:
-            LoopStrategyFactory.register("workflow", WorkflowLoop)
 
     # ============ 结果与响应处理 ============
 

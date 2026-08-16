@@ -1,20 +1,23 @@
 """
 Loop 策略模块——可插拔的执行循环策略。
 
-提供三种 LoopStrategy 实现，共享同一套基础设施（Hook / StepRunner / Context）：
+提供三种内置 LoopStrategy 实现，共享同一套基础设施（Hook / StepRunner / Context）：
   - ReActLoop：边思考边行动（默认）
   - PlanExecuteLoop：先规划再执行
   - WorkflowLoop：固定 DAG + Agent 决策节点
 
+内置三种之外，可通过 LoopStrategyFactory 注册自定义策略（策略类或工厂函数），
+按名创建时支持透传策略构造参数：
+
 使用方式：
-    from src.runtime.loops import ReActLoop, PlanExecuteLoop, WorkflowLoop, LoopStrategyFactory
+    from src.runtime.loops import LoopStrategyFactory
 
-    # 注册策略
+    # 注册策略类或工厂函数
     LoopStrategyFactory.register("react", ReActLoop)
-    LoopStrategyFactory.register("plan_and_execute", PlanExecuteLoop)
+    LoopStrategyFactory.register("my_loop", lambda **kw: MyLoop(**kw))
 
-    # 通过工厂创建
-    strategy = LoopStrategyFactory.create("react", hooks=hooks, step_runner=runner)
+    # 通过工厂创建（extra 参数透传给策略构造函数）
+    strategy = LoopStrategyFactory.create("my_loop", hooks=hooks, step_runner=runner, extra=1)
 """
 
 from src.intent import HybridClassifier, LLMClassifier, RuleClassifier

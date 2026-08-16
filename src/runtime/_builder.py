@@ -40,6 +40,8 @@ class RuntimeBuilder:
         self._tool_executor: ExecutorFn | None = None
         self._loop_strategy: LoopStrategy | None = None
         self._loop_strategy_name: str = ""
+        self._loop_strategy_cls: type[LoopStrategy] | None = None
+        self._loop_kwargs: dict[str, Any] = {}
         self._router: RouterFn | None = None
         self._serializer: Any = None
         self._services: dict[str, Any] = {}
@@ -220,16 +222,22 @@ class RuntimeBuilder:
 
     def loop(
         self,
-        strategy: str | LoopStrategy = "",
+        strategy: str | type[LoopStrategy] | LoopStrategy = "",
         **kwargs: Any,
     ) -> RuntimeBuilder:
         """
         配置 Step Loop 策略。
 
         Args:
-            strategy: LoopStrategy 实例，或策略名称（"react", "plan_and_execute",
-                "workflow"）。实例由用户自行配置参数；字符串使用默认参数。
+            strategy: LoopStrategy 实例、LoopStrategy 子类、或策略名称。
+                内置名称："react"（默认）、"plan_and_execute"、"workflow"；
+                自定义名称需先通过 LoopStrategyFactory.register 注册
+                （支持注册策略类或工厂函数）。
+                实例由用户自行配置参数；类与名称由 Runtime 构造时自动注入
+                hooks/step_runner/controller/router，并透传 **kwargs。
                 不传或传空字符串则使用默认 ReActLoop。
+            **kwargs: 按类或按名称创建时传递给策略构造函数的额外参数
+                （如 max_iterations / max_replans / workflow_definition）。
 
         Returns:
             self（链式调用）。
@@ -237,9 +245,18 @@ class RuntimeBuilder:
         if isinstance(strategy, LoopStrategy):
             self._loop_strategy = strategy
             self._loop_strategy_name = ""
+            self._loop_strategy_cls = None
+            self._loop_kwargs = {}
+        elif isinstance(strategy, type) and issubclass(strategy, LoopStrategy):
+            self._loop_strategy = None
+            self._loop_strategy_name = ""
+            self._loop_strategy_cls = strategy
+            self._loop_kwargs = dict(kwargs)
         else:
             self._loop_strategy = None
             self._loop_strategy_name = strategy or "react"
+            self._loop_strategy_cls = None
+            self._loop_kwargs = dict(kwargs)
         # 保留 services 中的 loop_config 供外部查询
         self._services["loop_config"] = {"strategy": strategy, **kwargs}
         return self
@@ -313,6 +330,10 @@ class RuntimeBuilder:
 
         if config.loop:
             self._services["loop_config"] = dict(config.loop)
+            # 真正应用 loop 配置：strategy 作为策略名称，其余键透传为构造参数
+            loop_cfg = dict(config.loop)
+            strategy = loop_cfg.pop("strategy", "")
+            self.loop(strategy=strategy, **loop_cfg)
 
         if config.memory:
             self._services["memory_config"] = dict(config.memory)
@@ -481,6 +502,8 @@ class RuntimeBuilder:
             tool_executor=tool_executor,
             loop_strategy=self._loop_strategy,
             loop_strategy_name=self._loop_strategy_name or "react",
+            loop_strategy_cls=self._loop_strategy_cls,
+            loop_kwargs=self._loop_kwargs or None,
             router=self._router,
             services=self._services or None,
             agent_id=self._agent_id,

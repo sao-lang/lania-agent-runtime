@@ -61,6 +61,8 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
         tool_executor: ExecutorFn | None = None,
         loop_strategy: LoopStrategy | None = None,
         loop_strategy_name: str = "react",
+        loop_strategy_cls: type[LoopStrategy] | None = None,
+        loop_kwargs: dict[str, Any] | None = None,
         router: RouterFn | None = None,
         serializer: MessageSerializer | None = None,
         services: dict[str, Any] | None = None,
@@ -75,9 +77,13 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
             hooks: HookRegistry 实例。不提供则创建新的。
             llm_executor: LLM 执行器。
             tool_executor: 工具执行器。
-            loop_strategy: LoopStrategy 实例。提供此参数时忽略 loop_strategy_name。
-            loop_strategy_name: 策略名称（"react" | "plan_and_execute" |
-                "workflow"，默认 "react"）。仅 loop_strategy 为 None 时生效。
+            loop_strategy: LoopStrategy 实例。提供此参数时忽略其他 loop 参数。
+            loop_strategy_name: 策略名称。内置 "react" | "plan_and_execute" |
+                "workflow"，也可为通过 LoopStrategyFactory.register 注册的自定义名称。
+                默认 "react"。仅 loop_strategy / loop_strategy_cls 为 None 时生效。
+            loop_strategy_cls: LoopStrategy 子类。提供此参数时按类直接构造，
+                忽略 loop_strategy_name；构造时自动注入 hooks/step_runner/controller/router。
+            loop_kwargs: 传递给策略构造函数的额外参数（按名或按类创建时生效）。
             router: 路由函数。
             serializer: 消息序列化器。不提供则使用 DefaultSerializer。
             services: 外部服务引用字典。Builder 可在 build() 中注入
@@ -123,17 +129,25 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
             serializer=self._serializer,
         )
 
-        # LoopStrategy —— 实例优先，否则按名创建
+        # LoopStrategy —— 实例优先，其次按类直接构造，最后按名从工厂创建
         if loop_strategy is not None:
             self._loop = loop_strategy
-        else:
-            self._register_default_strategies()
-            self._loop = LoopStrategyFactory.create(
-                loop_strategy_name,
+        elif loop_strategy_cls is not None:
+            self._loop = loop_strategy_cls(
                 hooks=self._hooks,
                 step_runner=self._step_runner,
                 controller=self._controller,
                 router=self._router,
+                **(loop_kwargs or {}),
+            )
+        else:
+            self._loop = LoopStrategyFactory.create(
+                loop_strategy_name or "react",
+                hooks=self._hooks,
+                step_runner=self._step_runner,
+                controller=self._controller,
+                router=self._router,
+                **(loop_kwargs or {}),
             )
 
         # 上下文负载
