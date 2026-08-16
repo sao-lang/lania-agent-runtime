@@ -17,7 +17,12 @@ Context 保持纯编排、不持有数据。
 """
 
 from src.session._config import SessionConfig
-from src.session._hooks import SessionCommitHook, SessionEndHook, SessionStartHook
+from src.session._hooks import (
+    SessionCommitHook,
+    SessionEndHook,
+    SessionResumeHook,
+    SessionStartHook,
+)
 from src.session._models import SessionRecord, SessionSummary
 from src.session._persistence import SessionPersistence
 from src.session._protocols import SessionServiceProtocol
@@ -37,6 +42,7 @@ __all__ = [
     "SessionStore",
     # Hooks
     "SessionStartHook",
+    "SessionResumeHook",
     "SessionCommitHook",
     "SessionEndHook",
 ]

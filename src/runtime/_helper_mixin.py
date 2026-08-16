@@ -78,6 +78,8 @@ class RuntimeHelperMixin:
             _update_context_payload_callback=self._update_context_payload_impl,
             _set_messages_callback=self._set_messages_impl,
             _set_step_index_callback=self._set_step_index_impl,
+            _set_budget_callback=self._set_budget_impl,
+            _set_pause_state_callback=self._set_pause_state_impl,
         )
 
     def _set_plan_impl(self, plan: dict) -> None:
@@ -101,6 +103,26 @@ class RuntimeHelperMixin:
     def _set_step_index_impl(self, step_index: int) -> None:
         """Runtime 内部：恢复 step 游标（Session 续聊对齐）。"""
         self._step_index = step_index
+
+    def _set_budget_impl(self, snapshot: BudgetSnapshot) -> None:
+        """Runtime 内部：整体替换预算快照（MemoryResumeHook 恢复断点）。"""
+        self._budget = BudgetSnapshot(
+            token_used=snapshot.token_used,
+            token_limit=snapshot.token_limit,
+            step_count=snapshot.step_count,
+            step_limit=snapshot.step_limit,
+            cost_in_cents=snapshot.cost_in_cents,
+        )
+
+    def _set_pause_state_impl(self, state: dict) -> None:
+        """Runtime 内部：整体替换暂停状态（MemoryResumeHook 恢复断点）。"""
+        self._pause_state.update(
+            {
+                "is_paused": bool(state.get("is_paused", False)),
+                "pending_approvals": list(state.get("pending_approvals", [])),
+                "resume_token": str(state.get("resume_token", "")),
+            }
+        )
 
     async def _handle_pause(self, pause_action: PauseAction) -> None:
         """处理暂停请求。"""

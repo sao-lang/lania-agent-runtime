@@ -29,6 +29,7 @@ class SessionRecord:
         metadata: 外部扩展字段。
         messages: 完整对话消息历史（user/assistant/tool，不含 system；
             system prompt 属运行时配置，Session 不保存）。Session 独有，其它组件不存原文。
+        chunk_count: 历史分块数量（>0 表示消息以 ssh: 前缀分块存储，0 表示内联）。
         version: 数据格式版本号。
         ttl: 过期秒数，0 = 永久。
     """
@@ -49,6 +50,7 @@ class SessionRecord:
     last_error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     messages: list[dict] = field(default_factory=list)
+    chunk_count: int = 0
     version: int = 1
     ttl: int = 0
 

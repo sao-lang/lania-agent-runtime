@@ -5,6 +5,7 @@ SessionStore——key 约定 + JSON 序列化。
 键名格式（与 memory 的 wm:/ep: 前缀并列，互不冲突）：
   ss:{session_id}              → SessionRecord（JSON 序列化，含完整消息历史）
   ssi:{user_id}:{session_id}   → 用户 → 会话索引（值只存存在标记）
+  ssh:{session_id}:{index}   → 历史消息分块（Phase 2，消息数超过 chunk_size 时启用）
 """
 
 from __future__ import annotations
@@ -57,13 +58,73 @@ class SessionStore:
             return parts[2]
         return None
 
-    async def save_record(self, record: SessionRecord) -> None:
-        """持久化会话记录。
+    @staticmethod
+    def _chunk_key(session_id: str, index: int) -> str:
+        """构造历史分块键。"""
+        return f"ssh:{session_id}:{index}"
+
+    @staticmethod
+    def _chunk_prefix(session_id: str) -> str:
+        """构造历史分块键前缀。"""
+        return f"ssh:{session_id}:"
+
+    async def _delete_chunks(self, session_id: str) -> None:
+        """删除指定会话的全部历史分块。"""
+        keys = await self._store.list_keys(self._chunk_prefix(session_id))
+        for key in keys:
+            await self._store.delete(key)
+
+    async def _load_chunks(self, record: SessionRecord) -> None:
+        """从分块键重建完整消息历史（缺失/损坏的分块跳过）。"""
+        messages: list[dict] = []
+        for index in range(record.chunk_count):
+            data = await self._store.get(self._chunk_key(record.session_id, index))
+            if data is None:
+                continue
+            try:
+                chunk = json.loads(data.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if isinstance(chunk, list):
+                messages.extend(chunk)
+        record.messages = messages
+
+    async def save_record(self, record: SessionRecord, *, chunk_size: int = 0) -> None:
+        """持久化会话记录（可选分块存储）。
+
+        chunk_size > 0 且消息数超过阈值时，历史消息按 ssh:{session_id}:{index}
+        分块存储，ss: 记录只保留元数据（messages 置空 + chunk_count）；
+        否则保持内联存储。切换布局时会清理残留分块，保证同一会话
+        不会同时存在两套布局。
 
         Args:
             record: 会话记录。
+            chunk_size: 分块阈值，0 表示不启用分块。
         """
-        await self._store.put(self._record_key(record.session_id), self._serialize(record))
+        chunks: list[list[dict]] = []
+        if chunk_size > 0 and len(record.messages) > chunk_size:
+            chunks = [
+                record.messages[i : i + chunk_size]
+                for i in range(0, len(record.messages), chunk_size)
+            ]
+
+        if chunks:
+            await self._delete_chunks(record.session_id)
+            for index, chunk in enumerate(chunks):
+                await self._store.put(
+                    self._chunk_key(record.session_id, index),
+                    json.dumps(chunk, ensure_ascii=False).encode("utf-8"),
+                )
+            record.chunk_count = len(chunks)
+            stored_messages = record.messages
+            record.messages = []
+            await self._store.put(self._record_key(record.session_id), self._serialize(record))
+            # 恢复内存中的完整消息列表（缓存与后续增量提交依赖）
+            record.messages = stored_messages
+        else:
+            await self._delete_chunks(record.session_id)
+            record.chunk_count = 0
+            await self._store.put(self._record_key(record.session_id), self._serialize(record))
 
     async def load_record(self, session_id: str) -> SessionRecord | None:
         """读取会话记录。
@@ -77,14 +138,18 @@ class SessionStore:
         data = await self._store.get(self._record_key(session_id))
         if data is None:
             return None
-        return self._deserialize(data)
+        record = self._deserialize(data)
+        if record is not None and record.chunk_count > 0:
+            await self._load_chunks(record)
+        return record
 
     async def delete_record(self, session_id: str) -> None:
-        """删除会话记录主键。
+        """删除会话记录主键与历史分块。
 
         Args:
             session_id: 会话 ID。
         """
+        await self._delete_chunks(session_id)
         await self._store.delete(self._record_key(session_id))
 
     async def save_user_index(self, user_id: str, session_id: str) -> None:
@@ -150,6 +215,7 @@ class SessionStore:
             "last_error": record.last_error,
             "metadata": record.metadata,
             "messages": record.messages,
+            "chunk_count": record.chunk_count,
             "version": record.version,
             "ttl": record.ttl,
         }
@@ -174,6 +240,7 @@ class SessionStore:
             last_error=raw.get("last_error"),
             metadata=raw.get("metadata", {}),
             messages=raw.get("messages", []),
+            chunk_count=raw.get("chunk_count", 0),
             version=raw.get("version", 1),
             ttl=raw.get("ttl", 0),
         )

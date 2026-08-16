@@ -56,6 +56,10 @@ class RuntimeContext:
     ) = field(default=None, repr=False)
     _set_messages_callback: Callable[[list[dict]], None] | None = field(default=None, repr=False)
     _set_step_index_callback: Callable[[int], None] | None = field(default=None, repr=False)
+    _set_budget_callback: Callable[["BudgetSnapshot"], None] | None = field(
+        default=None, repr=False
+    )
+    _set_pause_state_callback: Callable[[dict], None] | None = field(default=None, repr=False)
 
     def set_messages(self, messages: list[dict]) -> None:
         """
@@ -89,6 +93,39 @@ class RuntimeContext:
         if self._set_step_index_callback is None:
             raise RuntimeError("set_step_index 未在 Runtime 中初始化")
         self._set_step_index_callback(step_index)
+
+    def set_budget(self, snapshot: BudgetSnapshot) -> None:
+        """
+        整体替换预算快照（恢复执行断点）。
+
+        仅 MemoryResumeHook 使用——wm: 快照中的预算在暂停/崩溃恢复时
+        写回 Runtime，与 deduct_budget 的增量扣减互补。
+
+        Args:
+            snapshot: 新的预算快照。
+
+        Raises:
+            RuntimeError: 如果未设置 _set_budget_callback。
+        """
+        if self._set_budget_callback is None:
+            raise RuntimeError("set_budget 未在 Runtime 中初始化")
+        self._set_budget_callback(snapshot)
+
+    def set_pause_state(self, state: dict) -> None:
+        """
+        整体替换暂停状态（恢复执行断点）。
+
+        仅 MemoryResumeHook 使用——恢复 wm: 快照中的 pending_approvals 等。
+
+        Args:
+            state: 暂停状态字典（is_paused / pending_approvals / resume_token）。
+
+        Raises:
+            RuntimeError: 如果未设置 _set_pause_state_callback。
+        """
+        if self._set_pause_state_callback is None:
+            raise RuntimeError("set_pause_state 未在 Runtime 中初始化")
+        self._set_pause_state_callback(state)
 
     def set_plan(self, plan: dict) -> None:
         """

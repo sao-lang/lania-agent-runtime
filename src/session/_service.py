@@ -75,7 +75,7 @@ class SessionService:
             metadata=dict(metadata or {}),
             ttl=self._config.ttl_seconds,
         )
-        await self._store.save_record(record)
+        await self._store.save_record(record, chunk_size=self._config.chunk_size)
         if user_id:
             await self._store.save_user_index(user_id, session_id)
         self._cache[session_id] = record
@@ -112,6 +112,7 @@ class SessionService:
         *,
         limit: int = 20,
         status: str | None = None,
+        offset: int = 0,
     ) -> list[SessionSummary]:
         """列出用户的会话摘要（按 updated_at 倒序，回读 ss: 记录组装）。
 
@@ -119,6 +120,7 @@ class SessionService:
             user_id: 用户 ID。
             limit: 最大返回条数。
             status: 可选的状态过滤。
+            offset: 分页偏移量（默认 0）。
 
         Returns:
             会话摘要列表。
@@ -136,7 +138,7 @@ class SessionService:
         if status:
             records = [r for r in records if r.status == status]
         records.sort(key=lambda r: r.updated_at or datetime.min, reverse=True)
-        return [SessionStore.to_summary(r) for r in records[:limit]]
+        return [SessionStore.to_summary(r) for r in records[offset : offset + limit]]
 
     async def append_messages(
         self,
@@ -194,7 +196,7 @@ class SessionService:
             record.step_index = max(record.step_index, step_index)
         record.updated_at = datetime.now()
 
-        await self._store.save_record(record)
+        await self._store.save_record(record, chunk_size=self._config.chunk_size)
         self._cache[session_id] = record
         return record
 
@@ -222,7 +224,7 @@ class SessionService:
         if last_error is not None:
             record.last_error = last_error
         record.updated_at = datetime.now()
-        await self._store.save_record(record)
+        await self._store.save_record(record, chunk_size=self._config.chunk_size)
         self._cache[session_id] = record
         return record
 
@@ -258,7 +260,7 @@ class SessionService:
         record.updated_at = now
         if last_error is not None:
             record.last_error = last_error
-        await self._store.save_record(record)
+        await self._store.save_record(record, chunk_size=self._config.chunk_size)
         self._cache[session_id] = record
         return record
 

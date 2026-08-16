@@ -397,7 +397,7 @@ class RuntimeBuilder:
         if self._memory_service is not None:
             from src.context._manager import ContextManager
             from src.context.context_hooks import ContextAssemblerHook
-            from src.memory._hooks import MemoryCommitHook
+            from src.memory._hooks import MemoryCommitHook, MemoryResumeHook
 
             if self._hooks is None:
                 self._hooks = HookRegistry()
@@ -423,10 +423,22 @@ class RuntimeBuilder:
                 name="_memory_commit",
                 priority=500,
             )
+            self._hooks.register(
+                HookPoint.SESSION_RESUME,
+                MemoryResumeHook(self._memory_service),
+                primitive=PrimitiveType.TRANSFORM,
+                name="_memory_resume",
+                priority=20,
+            )
 
         # 注册 Session hooks（Session 提交原文在 Memory 沉淀摘要之前）
         if self._session_service is not None:
-            from src.session import SessionCommitHook, SessionEndHook, SessionStartHook
+            from src.session import (
+                SessionCommitHook,
+                SessionEndHook,
+                SessionResumeHook,
+                SessionStartHook,
+            )
 
             if self._hooks is None:
                 self._hooks = HookRegistry()
@@ -451,6 +463,13 @@ class RuntimeBuilder:
                 SessionEndHook(self._session_service),
                 primitive=PrimitiveType.TRANSFORM,
                 name="_session_end",
+                priority=10,
+            )
+            self._hooks.register(
+                HookPoint.SESSION_RESUME,
+                SessionResumeHook(self._session_service, config=self._session_config),
+                primitive=PrimitiveType.TRANSFORM,
+                name="_session_resume",
                 priority=10,
             )
 
