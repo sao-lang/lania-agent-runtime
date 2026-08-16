@@ -17,6 +17,22 @@
 - **复盘结果：** 886 测试通过（875 → 886），覆盖率 96.27%（≥96），ruff check/format 零报错（仅预存 test_workflow_intent.py N817）；`_factory.py` 100% 覆盖。
 - **潜在风险：** ① `from_config` 的 `config.loop` 此前被静默忽略，现真正生效——含 strategy 但缺必需构造参数（如 workflow 缺 workflow_definition）会在 build 时报错而非忽略；② 保留参数名 hooks/step_runner/controller/router 不可通过 kwargs 覆盖（重复传参会 TypeError）；③ `LoopStrategyFactory.available()` 仅列出已注册名称，内置名称在首次 create 前不列出。
 
+#### 11. 文档：框架完善系列设计（8 份）
+
+- **时间：** 2026-08-17 00:40:00
+- **发起人：** user
+- **修改文件：**
+  - `docs/design/observability-design.md` — 可观测性（结构化日志 / 指标 / 追踪，与审计分工）
+  - `docs/design/lifecycle-agent-registry-design.md` — 生命周期与 AgentRegistry（含 wm 快照生产端 CheckpointHook）
+  - `docs/design/api-surface-extension-sdk-design.md` — 公共 API 面分级与扩展 SDK（契约校验 / 脚手架）
+  - `docs/design/recovery-fault-tolerance-design.md` — 恢复与容错（快照 / 幂等 / 重试矩阵 / 取消传播）
+  - `docs/design/security-design.md` — 安全（密钥红线 / Prompt 注入 / 工具与 MCP 沙箱 / 供应链 / 审计合规）
+  - `docs/design/testing-infrastructure-design.md` — 测试基础设施（夹具库 / 契约测试 / E2E / 基准）
+  - `docs/design/examples-templates-design.md` — 示例与模板（hello-agent / 客服 / 治理完备 / 扩展示范）
+  - `docs/design/packaging-release-design.md` — 打包与发布（wheel 自包含 / extras / 版本矩阵 / 发布流程）
+- **修改内容：** 从框架开发者角度补齐工程化落地所需的 8 个设计方向，与既有组件设计（runtime / session / memory / context / governance / gateway）构成完整设计体系；每份含现状盘点、设计原则、方案、实施顺序、风险与待确认决策。
+- **复盘结果：** N/A（纯设计文档，未编码）
+- **潜在风险：** 各文档待确认决策需在实现前拍板；实现顺序建议：护栏 → 网关 → 可观测性 → 生命周期 → 其余。
 #### 10. 文档：网关（接入层）设计方案
 
 - **时间：** 2026-08-17 00:10:00
