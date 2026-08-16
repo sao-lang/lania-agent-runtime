@@ -4,9 +4,14 @@
 >
 > 关联文档：[`serializer-design.md`](serializer-design.md) — Serializer 可替换接口定义
 > 关联文档：[`memory-system-design.md`](memory-system-design.md) — MemoryService 数据来源
+> 关联文档：[`session-component-design.md`](session-component-design.md) — Session 恢复原始历史（Context 的输入来源）
 > 主文档：[`agent-runtime-design.md`](agent-runtime-design.md) — §6.5 `Pipeline[T]` 是本管线的通用抽象
 
 > 在现有 Hook + Memory 体系上封装统一上下文管理层，实现选取→压缩→预算→序列化四阶段管线。
+
+> **与 Session 组件的边界**：完整原始消息历史由 Session 组件恢复进 `ctx.messages`（`set_messages`），
+> Context 只负责决定"LLM 这次看到多少"（SELECT 裁剪）。情景记忆仅提供摘要（不含原文，
+> `raw_content` 为 `@deprecated v2` 字段），Context 的 LOAD 阶段只消费 `summary`。
 
 ---
 
@@ -233,7 +238,7 @@ class MemoryService:
 @dataclass
 class RecallResult:
     """Memory 返回的裸数据，不含任何裁剪/序列化逻辑。"""
-    episodic_memories: list[EpisodicMemoryEntry]    # 含 summary + raw_content + turn_index
+    episodic_memories: list[EpisodicMemoryEntry]    # 含 summary + turn_index（不含原文）
     entity_profile: dict[str, EntityProfileValue]
     concepts: list[ConceptSummary]
     tone_instruction: str

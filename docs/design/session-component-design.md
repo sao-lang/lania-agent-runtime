@@ -7,7 +7,7 @@
 > - [`memory-system-design.md`](memory-system-design.md) — MemoryService 五层记忆
 
 > **v2 修订要点**：
-> 1. 明确三组件边界：**Session 是完整原始消息历史的唯一事实源**，Memory L1/L2 不再存储消息原文，Context 保持纯编排、不持有数据；
+> 1. 明确三组件边界：**Session 是完整对话消息历史的唯一事实源**（不含 system，system prompt 属运行时配置，见 §16），Memory L1/L2 不再存储消息原文，Context 保持纯编排、不持有数据；
 > 2. 新增**零耦合约束**：组件间运行期零导入，跨组件数据只经 RuntimeContext / Builder 传递，唯一接线点在 `RuntimeBuilder`；
 > 3. 修正 v1 审查发现的问题：`ctx.services` 浅拷贝不可写、session_id 无注入入口、续聊 turn_index 重置、TTL 不生效等。
 
@@ -17,7 +17,7 @@
 
 | 组件 | 回答的问题 | 职责 | 持有数据 | 生命周期 |
 |------|-----------|------|---------|---------|
-| **Session** | 这次会话是什么？ | 会话身份、生命周期、完整历史归档 | 会话元数据 + 完整原始消息历史（唯一事实源） | 长期 |
+| **Session** | 这次会话是什么？ | 会话身份、生命周期、完整历史归档 | 会话元数据 + 完整对话消息历史（唯一事实源，不含 system） | 长期 |
 | **Memory** | 记住了什么？执行到哪了？ | 执行断点快照 + 五层记忆沉淀 | 执行状态游标（不含消息原文）+ 摘要/画像/概念/模式 | L1 短期、L2-L5 长期 |
 | **Context** | LLM 这次看到什么？ | 上下文编排（选取/压缩/预算/序列化） | 不持有任何持久化数据 | 每次 LLM 调用 |
 
@@ -48,7 +48,7 @@
 | **唯一事实源** | 每类数据只有一个写者：完整消息原文只归 Session，Memory 只存摘要/画像/知识/模式与执行游标，Context 不持有数据 |
 | **零耦合** | 运行期组件间零导入；跨组件数据只经 RuntimeContext / Builder 传递；唯一接线点在 `RuntimeBuilder` |
 | **复用持久化契约** | `SessionPersistence` 与 `MemoryPersistence` 同为 4 方法 KV 接口，可共用同一后端实例（依赖注入，非耦合） |
-| **生命周期完整** | start → 多轮 step（逐轮提交原文）→ end / resume 全覆盖 |
+| **生命周期完整** | start → 多轮 step（逐轮提交对话消息）→ end / resume 全覆盖 |
 | **只增不改** | 已有组件行为不变；Memory 侧仅"废弃字段、停止写入"（标记 `@deprecated v2`），Runtime 仅新增受限 writer 与 SESSION 挂载点执行顺序调整 |
 
 ### 2.2 职责边界与唯一事实源
@@ -56,7 +56,7 @@
 | 数据 | 唯一写者 | 读者 | 存储键 |
 |------|---------|------|--------|
 | 会话元数据（title/user/status/统计） | Session | 宿主应用、Session 自身 | `ss:` |
-| 完整原始消息历史 | Session（AFTER_STEP 逐轮提交） | Session（恢复）、宿主（审计/UI） | `ss:` |
+| 完整对话消息历史（user/assistant/tool，不含 system） | Session（AFTER_STEP 逐轮提交） | Session（恢复）、宿主（审计/UI） | `ss:` |
 | 执行状态快照（游标，不含消息原文） | Memory L1（pause/error/checkpoint） | Memory（恢复）、宿主 | `wm:` |
 | 情景摘要 / 实体画像 / 语义概念 / 行为模式 | Memory L2-L5（AFTER_STEP） | Context（LOAD 阶段） | `ep:` `en:` `sn:` `bp:` |
 | llm_messages | Context（BEFORE_LLM） | LLM Executor | 无（内存） |
@@ -72,6 +72,7 @@
 | token 用量 | Runtime 实时计量（`budget.token_used`）；Session 在 finalize 时**读取快照**归档统计；wm 保留执行预算。同一来源、不同用途，不是双份维护 |
 | user_id | 宿主注入 `ctx.services`；Session 记录会话↔用户映射（`ssi:` 索引）；Memory / Context 仅作为检索维度消费，不维护映射 |
 | 历史注入 vs 上下文选取 | Session 负责"恢复历史进 ctx.messages"；Context 负责"决定 LLM 看到多少"（SELECT 裁剪）。输入输出不同，不重叠 |
+| system prompt | 唯一归属是运行时配置（`AgentRuntime` 构造时写入 `ContextPayload`）；Session 不存、Context 组装时注入（详见 §16） |
 | 摘要去重 | `Selector` 的 `dedup_turn_indices` 是防御性机制（防同一轮"原文 + 摘要"双份进 prompt），不是记忆管理职责 |
 | 断点恢复编排 | Session 恢复历史（消息 + 游标）、Memory 恢复执行状态（plan/budget/pause）；组合只发生在 Builder，组件内部不互相调用 |
 
@@ -111,12 +112,12 @@
 
 ### 3.4 零耦合验证清单（实现时逐条验证）
 
-- [ ] `src/session` 中无 `import src.memory` / `import src.context`（含 TYPE_CHECKING 块）
-- [ ] `src/session` 对 `src.runtime` 的 import 仅存在于 TYPE_CHECKING 块
-- [ ] `src/memory`、`src/context` 中无 `import src.session`
-- [ ] Session 各 hook 不调用 `MemoryService`；Memory 各 hook 不调用 `SessionService`
-- [ ] 跨组件数据只经 `RuntimeContext` / `RuntimeBuilder` 传递
-- [ ] 断点/历史恢复由 Builder 并列注册完成，组件内部无互相调用
+- [x] `src/session` 中无 `import src.memory` / `import src.context`（含 TYPE_CHECKING 块）
+- [x] `src/session` 对 `src.runtime` 的 import 仅存在于 TYPE_CHECKING 块
+- [x] `src/memory`、`src/context` 中无 `import src.session`
+- [x] Session 各 hook 不调用 `MemoryService`；Memory 各 hook 不调用 `SessionService`
+- [x] 跨组件数据只经 `RuntimeContext` / `RuntimeBuilder` 传递
+- [ ] 断点/历史恢复由 Builder 并列注册完成，组件内部无互相调用（Phase 2：`SessionResumeHook` + `MemoryResumeHook` 待实现；Phase 1 的 `SessionStartHook` 恢复历史/游标已由 Builder 注册）
 
 ### 3.5 禁止清单（违反即视为耦合或重叠）
 
@@ -148,7 +149,7 @@ src/
   │   └── _hooks/
   │       ├── __init__.py
   │       ├── _start.py         # SessionStartHook   (SESSION_START Transform)
-  │       ├── _commit.py        # SessionCommitHook  (AFTER_STEP Transform，逐轮提交原文)
+  │       ├── _commit.py        # SessionCommitHook  (AFTER_STEP Transform，逐轮提交对话消息，不含 system)
   │       ├── _end.py           # SessionEndHook     (SESSION_END Transform)
   │       └── _resume.py        # SessionResumeHook  (SESSION_RESUME Transform，Phase 2)
 ```
@@ -162,7 +163,7 @@ src/
 ```python
 @dataclass
 class SessionRecord:
-    """会话记录——会话元数据 + 完整原始消息历史（唯一事实源）。
+    """会话记录——会话元数据 + 完整对话消息历史（唯一事实源，不含 system）。
 
     Attributes:
         session_id: 主键，与 Runtime.session_id 一致。
@@ -175,7 +176,8 @@ class SessionRecord:
         step_index: 已提交的 step 游标（续聊时用于 turn_index 对齐）。
         last_error: 最后错误信息。
         metadata: 外部扩展字段。
-        messages: 完整原始消息历史（Session 独有，其它组件不存原文）。
+        messages: 完整对话消息历史（user/assistant/tool，不含 system；system
+            prompt 属运行时配置，Session 不保存）。Session 独有，其它组件不存原文。
         version: 数据格式版本号。
         ttl: 过期秒数，0 = 永久。
     """
@@ -296,10 +298,13 @@ class SessionService:
         self,
         session_id: str,
         messages: list[dict],
+        *,
+        step_index: int | None = None,
     ) -> SessionRecord | None:
         """增量提交消息：以 record.message_count 为基准只追加新消息（幂等）。
 
-        超过 config.max_history_messages 时裁掉最旧消息。
+        超过 config.max_history_messages 时裁掉最旧消息；单条消息超过
+        config.max_message_chars 时截断。step_index 用于续聊时对齐游标。
         """
         ...
 
@@ -401,6 +406,11 @@ class SessionCommitHook:
 ```
 
 > 与 `MemoryCommitHook`（priority=500）的关系：Session 先提交原文，Memory 后沉淀摘要——两者互不调用，仅由 Builder 按优先级并列注册。
+
+> **存储约定（v2.1）**：`append_messages()` 在服务层过滤 `role == "system"` 的消息——
+> system prompt 的唯一归属是运行时配置（`ContextPayload`），不入会话历史。
+> 旧格式记录（v2 前首条为 system）在下次提交时自动剥离自愈，无需迁移。
+> 恢复历史后由 `ContextAssemblerHook` 用运行时 `system_prompt` 组装（详见 §16）。
 
 ### 8.3 SessionEndHook（SESSION_END Transform，priority=10）
 
@@ -599,13 +609,27 @@ SESSION_RESUME (Transform)
 
 ### Phase 1 — 基础
 
-1. 新建 `src/session/`：models / persistence / store / service / config / protocols
-2. 实现 SessionStartHook / SessionCommitHook / SessionEndHook
-3. Runtime 最小变更：session_id 注入、`set_messages` / `set_step_index` writer、SESSION 挂载点先跑 Transform、session_end 事件带 last_error
-4. Builder 增加 `.session()` / `.session_id()`
-5. Memory 侧字段废弃：`WorkingMemorySnapshot.messages`、`EpisodicMemoryEntry.raw_content` 标记 `@deprecated v2`，`MemoryCommitHook` 停止写原文
-6. 单元测试（store 增删改查、service 生命周期、TTL、hook 恢复/提交/归档）+ 端到端测试（Session → Runtime → Memory → Session 全链路）
-7. 零耦合验证清单逐条核对（§3.4）
+> ✅ **Phase 1 已实现**（2026-08-15）。实现时补充的两处细节：
+> - `append_messages()` 增加可选 `step_index` 参数，`SessionCommitHook` 传入 `ctx.step_index`，
+>   保证续聊时持久化游标（对应 v2 修复"续聊 turn_index 重置"）。
+> - `_backends/_sqlite.py` 未单独实现：按 §3.3 约定直接复用 memory 的 `SQLitePersistence`
+>   （满足 `SessionPersistence` 4 方法契约，依赖注入、非耦合），由 Builder 接线。
+
+1. [x] 新建 `src/session/`：models / persistence / store / service / config / protocols
+2. [x] 实现 SessionStartHook / SessionCommitHook / SessionEndHook
+3. [x] Runtime 最小变更：session_id 注入、`set_messages` / `set_step_index` writer、SESSION 挂载点先跑 Transform、session_end 事件带 last_error
+4. [x] Builder 增加 `.session()` / `.session_id()`
+5. [x] Memory 侧字段废弃：`WorkingMemorySnapshot.messages`、`EpisodicMemoryEntry.raw_content` 标记 `@deprecated v2`，`MemoryCommitHook` 停止写原文
+6. [x] 单元测试（store 增删改查、service 生命周期、TTL、hook 恢复/提交/归档）+ 端到端测试（Session → Runtime → Memory → Session 全链路）
+7. [x] 零耦合验证清单逐条核对（§3.4）
+
+> **顺带修复**：实现中发现 AFTER_STEP 的 `ctx` 是步骤执行前的快照，导致 Session/Memory
+> 提交看不到本轮 assistant 回复——已在 ReAct / PlanExecute / Workflow 三种 Loop 与
+> `run_step()` 中统一在步后重建 ctx；并修复 ContextAssemblerHook 组装路径丢失
+> Runtime `system_prompt` 的问题。
+>
+> **v2.1 修订**：system prompt 唯一归属运行时配置、Session 历史不含 system，
+> 执行器经重建 ctx 收到序列化/组装后的完整消息（详见 §16）。
 
 ### Phase 2 — 增强
 
@@ -618,6 +642,54 @@ SESSION_RESUME (Transform)
 1. 跨会话检索打通：`ContextManager` 消费 `cross_session_memory`，Memory 复用 `ep_user:` / `recall_user()`
 2. 会话级权限 / 审计 / 脱敏（与治理 Hook 组合）
 3. 多 Agent 会话（父会话 → 子会话）
+
+---
+
+## 16. system prompt 归属与执行器消息传递（v2.1 修订）
+
+### 16.1 背景
+
+v2 Phase 1 实现后审查发现两个问题：
+
+1. **system prompt 归属不清**：StepRunner 序列化后把 system 消息写回 `controller.messages`，
+   Session 逐轮提交时把 system 一并存入 `ss:`。续聊恢复历史后，
+   `Compressor._get_system_prompt()` 直接把历史首条 system 当作提示词——
+   同一 `session_id` 更换 `system_prompt` 时，旧提示词仍然生效（静默错误）。
+2. **执行器收不到组装结果**：StepRunner 把序列化/组装后的 messages 写进
+   `controller.messages`，但调用 `executor.execute(ctx)` 时传的是**步前快照 ctx**——
+   实际发给 LLM 的消息既可能缺 system，也可能缺最新轮次。
+   这与 `LLMExecutor` 接口文档"`ctx.messages` 已序列化、`[0]` 为 system message"的契约不符。
+
+### 16.2 设计裁定
+
+| 数据 | 归属 |
+|------|------|
+| system prompt | 运行时配置（`AgentRuntime` 构造时写入 `ContextPayload`），唯一权威来源 |
+| 会话历史 | Session 只存 user/assistant/tool 对话消息，**不含 system** |
+
+### 16.3 机制（两层修复）
+
+**L1：执行器消息传递（StepRunner）**
+
+- 序列化/组装完成、写入 `controller.messages` 后**重建 ctx 再调用执行器**
+  （`fresh_ctx = controller.build_context()`），确保执行器收到 `[system, ...]` 完整消息；
+- dirty 序列化路径的 `[serialized[0]] + controller.messages[1:]` 改为条件分支：
+  历史首条是 system 时替换（保持旧语义）；否则前置新 system
+  （Session 恢复的纯对话历史首条为 user，不能被丢弃）。
+
+**L2：Session 不存 system**
+
+- `SessionService.append_messages()` 存储层过滤 `role == "system"`；
+- 旧格式记录（v2 前首条为 system）在提交时剥离首条 system 自愈，无需迁移脚本；
+- 恢复历史后 `Compressor` 推导不出 system → `ContextAssemblerHook` 用运行时
+  `system_prompt` 兜底填充 → 续聊更换提示词立即生效。
+
+### 16.4 迁移与边界
+
+- 无 schema / API 变更；旧记录首次提交自动自愈；
+- 过渡行为：升级后**第一次**续聊旧会话仍可能沿用历史中的旧 system（该次运行提交后自愈）；
+- 执行器入参变化属于契约修正（与 `LLMExecutor` 接口文档对齐），
+  第三方自定义执行器若依赖旧行为（收到步前快照）需要适配。
 
 ---
 

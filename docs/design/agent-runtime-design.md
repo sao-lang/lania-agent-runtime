@@ -238,6 +238,7 @@ ctx.status                  Human approval, Multi-agent handoff, Error, Cancella
 ctx.agentIdentity           Agent Identity Transform
 
 ctx.messages                LLM/Tool Execute 返回后由 Runtime 写入
+                            Session Transform（session_start）→ setMessages 恢复历史
                             Output guardrails 有 modified 时替换内容
 
 ctx.contextPayload          Memory Bank Transform → memories
@@ -249,6 +250,7 @@ ctx.contextPayload          Memory Bank Transform → memories
 ctx.plan                    Planner Transform → 写入
                             Replan Transform → 改写
 ctx.stepIndex               Runtime 内部 step loop 自增
+                            Session Transform（session_start）→ setStepIndex 恢复游标
 ctx.stepHistory             Runtime 内部 after_step 追加
 
 ctx.budget                  Budget control Transform → after_tool 累加
@@ -298,6 +300,18 @@ class RuntimeContext:
 
     # --- 受限写方法 ---
     # 这些方法由 Runtime 内部注入，修改的是 Runtime 的内部状态而非此快照
+
+    # Session 恢复历史（仅 SessionStartHook / SessionResumeHook 使用）
+    _set_messages_callback: Callable[[list[dict]], None] | None = None
+    _set_step_index_callback: Callable[[int], None] | None = None
+
+    def set_messages(self, messages: list[dict]) -> None:
+        """仅 Session 恢复使用：整体替换 Runtime 内部消息列表"""
+        ...
+
+    def set_step_index(self, step_index: int) -> None:
+        """仅 Session 恢复使用：恢复 step 游标（续聊对齐 turn_index）"""
+        ...
 
     def set_plan(self, plan: dict) -> None:
         """仅 Planner / Replan 使用：更新执行计划"""
@@ -703,12 +717,14 @@ pipeline.add(TokenBudgetStage(),    order=5, id="budget")
 ```
 Session Start
   │
-  ├─[session_start: Observer → Transformer]
+  ├─[session_start: Transform → Observer]
+  │   Session: Transform → 恢复历史消息 + step 游标（setMessages / setStepIndex）
   │   Agent Identity: Intercept → 注入身份
   │   Planner: Transform → ctx.setPlan()
   │   Audit / Observability: Observe
   │
-  ├─[session_resume: Observer → Transformer]（仅从 pause 恢复时触发）
+  ├─[session_resume: Transform → Observer]（仅从 pause 恢复时触发）
+  │   Session: Transform → 恢复历史消息 + step 游标
   │   Human approval 重新验证
   │   Context 重新加载
   │   Audit: Observe
@@ -813,11 +829,11 @@ Session Start
   │
   ▼
 Session End
-  ├─[session_end: Observer]
-  │   Evaluation → 评估模型打分
-  │   Audit → 审计汇总写入
-  └─[session_end: Transform]
-      Session → 清理、脱敏、持久化
+  ├─[session_end: Transform]
+  │   Session → 归档元数据 + 统计（状态 / token / step / last_error）
+  └─[session_end: Observer]
+      Evaluation → 评估模型打分
+      Audit → 审计汇总写入
 ```
 
 ---
@@ -883,9 +899,12 @@ Execute 替换 Runtime 核心执行逻辑，结果通过返回值写回 Runtime�
 
 ### #16 Session → `session_start` / `session_end` Transform
 
-- `session_start`：从外部加载历史上下文，注入 metadata
-- `session_end`：清理、脱敏、持久化
-- 修改：`ctx.session`（start 设置，end 标记结束）
+- `session_start`：加载/创建会话记录，恢复完整历史消息与 step 游标（`set_messages` / `set_step_index`）
+- `session_end`：归档会话元数据与统计（状态 / token / step / last_error）
+- 修改：`ctx.messages`（恢复）、`ctx.stepIndex`（恢复）
+
+> 完整方案见 [`session-component-design.md`](session-component-design.md)。
+> 会话元数据与完整原始消息历史归 Session（`ss:`），Memory 不再存原文，Context 不持有数据。
 
 ### #17 Memory Bank → `before_step` + `after_step` Transform
 

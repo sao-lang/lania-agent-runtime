@@ -706,7 +706,8 @@ class WorkflowLoop(LoopStrategy):
             visited.add(current_node_id)
             in_path.discard(current_node_id)
 
-            # 步后 hook：Transformer → Observer
+            # 步后 hook（重建 ctx，确保 after_step 看到本轮最新 messages）
+            ctx = ctl.build_context()
             await self._run_after_step_hooks(ctx)
             ctl.budget.step_count += 1
             ctx = ctl.build_context()
@@ -774,6 +775,8 @@ class WorkflowLoop(LoopStrategy):
 
             yield {"type": "node_end", "node_id": current_node_id, "result": str(result)[:200]}
 
+            # 步后 hook（重建 ctx，确保 after_step 看到本轮最新 messages）
+            ctx = ctl.build_context()
             await self._run_after_step_hooks(ctx)
             ctl.budget.step_count += 1
             ctx = ctl.build_context()

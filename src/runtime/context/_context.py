@@ -54,6 +54,41 @@ class RuntimeContext:
     _update_context_payload_callback: (
         Callable[[Callable[["ContextPayload"], "ContextPayload"]], None] | None
     ) = field(default=None, repr=False)
+    _set_messages_callback: Callable[[list[dict]], None] | None = field(default=None, repr=False)
+    _set_step_index_callback: Callable[[int], None] | None = field(default=None, repr=False)
+
+    def set_messages(self, messages: list[dict]) -> None:
+        """
+        整体替换 Runtime 内部消息列表（恢复会话历史）。
+
+        仅 SessionStartHook / SessionResumeHook 使用——Session 是完整
+        原始消息历史的唯一事实源，恢复时经此 writer 写回 Runtime。
+
+        Args:
+            messages: 完整原始消息列表。
+
+        Raises:
+            RuntimeError: 如果未设置 _set_messages_callback。
+        """
+        if self._set_messages_callback is None:
+            raise RuntimeError("set_messages 未在 Runtime 中初始化")
+        self._set_messages_callback(messages)
+
+    def set_step_index(self, step_index: int) -> None:
+        """
+        恢复 step 游标（续聊时对齐 turn_index）。
+
+        仅 SessionStartHook / SessionResumeHook 使用。
+
+        Args:
+            step_index: 已提交的 step 游标。
+
+        Raises:
+            RuntimeError: 如果未设置 _set_step_index_callback。
+        """
+        if self._set_step_index_callback is None:
+            raise RuntimeError("set_step_index 未在 Runtime 中初始化")
+        self._set_step_index_callback(step_index)
 
     def set_plan(self, plan: dict) -> None:
         """

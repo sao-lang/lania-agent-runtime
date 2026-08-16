@@ -143,6 +143,34 @@ class TestRuntimeBuilder:
         # 没有 memory，就没有 context_manager
         assert "context_manager" not in runtime._services
 
+    async def test_session_service(self) -> None:
+        """注入 SessionService 时自动注册 Session hooks。"""
+        from src.memory._backends._sqlite import SQLitePersistence
+        from src.session._service import SessionService
+
+        persistence = SQLitePersistence(":memory:")
+        session = SessionService(persistence)
+        try:
+            runtime = (
+                RuntimeBuilder()
+                .system_prompt("助手")
+                .session_id("sess_abc")
+                .session(session)
+                .build()
+            )
+            assert runtime.session_id == "sess_abc"
+            names = {h.name for h in runtime._hooks.list()}
+            assert "_session_start" in names
+            assert "_session_commit" in names
+            assert "_session_end" in names
+        finally:
+            await session.close()
+
+    async def test_session_id_injection(self) -> None:
+        """不注入会话服务时 session_id 仍然生效。"""
+        runtime = RuntimeBuilder().system_prompt("助手").session_id("sess_custom").build()
+        assert runtime.session_id == "sess_custom"
+
     async def test_loop_config_by_name(self) -> None:
         """通过名称字符串配置 loop 策略。"""
         runtime = RuntimeBuilder().system_prompt("助手").loop("plan_and_execute").build()

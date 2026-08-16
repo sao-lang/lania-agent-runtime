@@ -69,6 +69,8 @@ class TestMemoryService:
         entries = await memory._episodic.recall_session("sess_1")
         assert len(entries) == 1
         assert entries[0].summary == "test"
+        # v2：不再写入原文（原文由 Session 组件持有）
+        assert entries[0].raw_content is None
 
     async def test_commit_critical_event(self, memory):
         step = StepContext(
@@ -82,6 +84,7 @@ class TestMemoryService:
         await memory.commit("sess_1", "u1", step)
         entries = await memory._episodic.recall_session("sess_1")
         assert entries[0].content_type == "critical_event"
+        assert entries[0].raw_content is None
 
     async def test_checkpoint_and_restore(self, memory):
         snap = WorkingMemorySnapshot(

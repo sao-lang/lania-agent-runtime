@@ -3,9 +3,15 @@
 > ⚠️ **本文档是 `agent-runtime-design.md` 的子文档**。阅读前请确保已理解主文档中的 **ContextPayload**（§5）和 **Hook 治理组件**（§8 #17 Memory Bank）。
 >
 > 关联文档：[`context-management-redesign.md`](context-management-redesign.md) — ContextManager 读取记忆
+> 关联文档：[`session-component-design.md`](session-component-design.md) — Session 持有完整原始消息历史（唯一事实源）
 > 主文档：[`agent-runtime-design.md`](agent-runtime-design.md) — §6.5 `Pipeline[T]`（读写管线的通用抽象）→ §12 `PluggableComponent`（MemoryPersistence 的组件化集成）
 
 > 基于 agent-runtime-design.md 的五层记忆架构，定义存储接口、引擎选型、数据流和管理策略。
+
+> **v2 边界约定（与 Session 组件对齐）**：完整原始消息历史的唯一事实源是 **Session 组件**（`ss:` 前缀）。
+> Memory 的 L1（工作记忆）只保存执行状态与游标、**不再保存 messages**；L2（情景记忆）只保存
+> **summary + 标签 + importance**、**不再写入 raw_content / 原文**。`WorkingMemorySnapshot.messages` 与
+> `EpisodicMemoryEntry.raw_content` 标记 `@deprecated v2`，保留字段仅用于读取旧数据，任何新写入路径不得填充。
 
 ---
 
@@ -55,7 +61,7 @@
 │  存储: 覆盖写, TTL 自动过期                                  │
 ├─────────────────────────────────────────────────────────────┤
 │  Layer 2: Episodic Memory (情景记忆)                         │
-│  内容: 原始对话记录 / 压缩后的摘要轮次                        │
+│  内容: 对话轮次摘要（原文由 Session 组件持有）                │
 │  生命周期: Session 级至跨 Session，按 TTL 或合并后淘汰        │
 │  存储: append-only, 时间序 + 语义索引                        │
 ├─────────────────────────────────────────────────────────────┤
@@ -86,7 +92,7 @@
                    │            ▼               │
                    │  ┌──────────────────┐      │
                    │  │  Layer 2: 写入   │      │
-                   │  │  原始 + 摘要     │      │
+                   │  │  摘要（不写原文）│      │
                    │  └───────┬──────────┘      │
                    │          │ 提取实体        │
                    │          ▼                 │
@@ -171,8 +177,8 @@ WorkingMemorySnapshot {
     session_id:     string              // 会话 ID
     step_index:     int                 // 快照时刻的步数
 
-    // ── 完整消息缓存 ──
-    messages:       Message[]           // 完整的 messages 数组
+    // ── 完整消息缓存（@deprecated v2：不再写入，原文由 Session 持有）──
+    messages:       Message[]           // 完整 messages 数组（仅兼容旧数据读取）
     message_count:  int                 // 消息数量
     total_tokens:   int                 // 已知总 token 数（避免重算）
 
@@ -244,14 +250,14 @@ EpisodicMemoryEntry {
 
     // ── 内容 ──
     summary:        string              // 压缩后的内容 (必填)
-    raw_content:    string | null       // 原始对话全文 (可选)
+    raw_content:    string | null       // @deprecated v2：不再写入（原文由 Session 持有）
     content_type:   "raw" | "summary" | "critical_event"
 
-    // ── 来源 ──
+    // ── 来源（v2：不存原文，仅保留摘要级来源标识）──
     source: {
-        user_message:       string | null
-        assistant_message:  string | null
-        tool_calls:         { tool_name: string, args: any, result: string }[]
+        user_message:       string | null   // @deprecated v2：不再写入
+        assistant_message:  string | null   // @deprecated v2：不再写入
+        tool_calls:         { tool_name: string, args: any, result: string }[]  // @deprecated v2：不再写入
     }
 
     // ── 标签 (辅助索引) ──
@@ -514,6 +520,11 @@ on after_step:
 
 用户只需实现 **4 个方法** 的 `MemoryPersistence` 接口，注入 `MemoryService` 后即可作为全部 5 层记忆的持久化后端。
 
+> **按层注入（v2.2）**：默认一个 `persistence` 后端覆盖全部 5 层；也可以通过
+> `working_persistence` / `episodic_persistence` / `entity_persistence` /
+> `semantic_persistence` / `pattern_persistence` 为某一层**单独注入 storage**，
+> 未指定的层自动回退到默认 `persistence`（见 §4.5）。
+
 ```python
 from abc import ABC, abstractmethod
 
@@ -566,12 +577,26 @@ class MemoryService:
     上层只感知这一个入口，不感知内部五层存储差异和序列化细节。
     """
 
-    def __init__(self, persistence: MemoryPersistence):
+    def __init__(
+        self,
+        persistence: MemoryPersistence | None = None,
+        *,
+        working_persistence: MemoryPersistence | None = None,
+        episodic_persistence: MemoryPersistence | None = None,
+        entity_persistence: MemoryPersistence | None = None,
+        semantic_persistence: MemoryPersistence | None = None,
+        pattern_persistence: MemoryPersistence | None = None,
+    ):
         """
         Args:
             persistence: 用户实现的持久化后端。
-                         MemoryService 内部通过 persistence.get/put/delete/list_keys
-                         操作全部 5 层记忆，无需用户处理序列化。
+                         缺省时自动创建 SQLitePersistence("./memory.db")，
+                         作为全部 5 层记忆的默认后端。
+            working_persistence / episodic_persistence / entity_persistence /
+            semantic_persistence / pattern_persistence: 可选，为对应层单独注入
+                         后端；未提供时回退到默认 persistence。
+                         MemoryService 内部通过各层后端的 get/put/delete/list_keys
+                         操作记忆，无需用户处理序列化。
         """
         self._store = persistence
 
@@ -808,7 +833,7 @@ class EpisodicMemoryStore(ABC):
 
         ⚠️ 此方法是 append-only 原则的唯一例外：
         仅允许修改 merged_to 和 merged_from 字段，
-        不允许修改原始内容（summary / raw_content / entities 等）。
+        不允许修改原始内容（summary / entities 等；raw_content 为 @deprecated v2 字段）。
         """
 
     @abstractmethod
@@ -1040,7 +1065,7 @@ class BehavioralPatternStore(ABC):
 ## 4. 存储引擎实现（基于 MemoryPersistence）
 
 MemoryService 不再需要 5 个独立的 Store 实现，所有持久化通过 `MemoryPersistence` 接口完成。
-框架默认提供 SQLite 实现，用户也可以注入任何自定义后端。
+框架默认提供 SQLite 实现，用户也可以注入任何自定义后端，并可为每一层单独指定后端。
 
 ### 4.1 引擎选型矩阵
 
@@ -1250,27 +1275,28 @@ class WorkingMemoryFileStore(WorkingMemoryStore):
 
 ### 4.5 可插拔设计
 
-替换引擎只需要实现对应接口：
+替换引擎只需要实现 `MemoryPersistence` 的 4 个方法。`MemoryService` 的每个层
+都接受一个可选的后端参数（`{layer}_persistence`），未提供该层后端时回退到默认
+`persistence`：
 
 ```python
-# 开发环境: 全部 SQLite
-memory_service = MemoryService(
-    working_store=WorkingMemoryFileStore("./data/wm"),
-    episodic_store=EpisodicMemorySQLiteStore("./data/memory.db"),
-    entity_store=EntityMemorySQLiteStore("./data/memory.db"),
-    semantic_store=SemanticKnowledgeSQLiteStore("./data/memory.db"),
-    pattern_store=BehavioralPatternSQLiteStore("./data/memory.db"),
-)
+# 开发环境: 全部共用 SQLite
+memory_service = MemoryService(persistence=SQLitePersistence("./memory.db"))
 
-# 生产环境: 混合引擎
+# 生产环境: 混合引擎（每层单独注入，未指定的层回退到默认 persistence）
 memory_service = MemoryService(
-    working_store=WorkingMemoryRedisStore(redis_client, ttl=3600),
-    episodic_store=EpisodicMemoryPGStore(pg_pool),           # 向量检索
-    entity_store=EntityMemoryRedisStore(redis_client),        # 高频 upsert
-    semantic_store=SemanticKnowledgePGStore(pg_pool),         # 图 + 向量
-    pattern_store=BehavioralPatternSQLiteStore("./data/memory.db"),
+    persistence=SQLitePersistence("./memory.db"),
+    working_persistence=MyRedisPersistence(redis_client, ttl=3600),      # L1: Redis
+    episodic_persistence=MyPGPersistence(pg_pool),                       # L2: PostgreSQL + pgvector
+    entity_persistence=MyRedisPersistence(redis_client),                 # L3: Redis 高频 upsert
+    semantic_persistence=MyNeo4jPersistence(neo4j_driver),               # L4: 图 + 向量
+    pattern_persistence=MyRedisPersistence(redis_client),                # L5: KV
 )
 ```
+
+> **约定**：`{layer}_persistence` 与 `persistence` 都是 `MemoryPersistence` 实现；
+> 层后端只接收该层 key 前缀（`wm:` / `ep:` / `en:` / `sn:` / `se:` / `bp:`）的读写，
+> 互不干扰。`close()` 会对所有**去重后**的后端逐一关闭（共享同一实例只关一次）。
 
 ---
 
@@ -1304,12 +1330,13 @@ async def commit(self, session_id, user_id, step_context):
         user_id=user_id,
         turn_index=step_context.turn_index,
         summary=step_context.summary,
-        raw_content=step_context.raw,
+        # v2：不再写入原文（raw_content 标记 @deprecated v2，原文由 Session 组件持有）
+        raw_content=None,
         content_type="critical_event" if step_context.importance > 0.7 else "raw",
         entities=step_context.entities_detected,
         topics=step_context.topics_detected,
         importance=step_context.importance,
-        token_count=estimate_tokens(step_context.raw),
+        token_count=estimate_tokens(step_context.summary),
     )
     await self._episodic.write(entry)
 
@@ -1940,3 +1967,7 @@ src/memory/
     ├── _commit.py               # MemoryCommitHook
     └── _cleanup.py              # SessionCleanupHook
 ```
+
+> **按层 storage 注入（v2.2 已实现）**：5 个 Store 仍是 KV 适配器，但每个 Store 可以绑定
+> 不同的 `MemoryPersistence` 后端——`MemoryService(episodic_persistence=..., ...)`
+> 未指定层回退到默认 `persistence`。见 §3.1 / §4.5。

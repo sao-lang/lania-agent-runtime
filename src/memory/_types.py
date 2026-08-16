@@ -43,9 +43,9 @@ class MemorySource:
     """情景记忆的来源信息。
 
     Attributes:
-        user_message: 用户消息原文。
-        assistant_message: 助理消息原文。
-        tool_calls: 本轮涉及的工具调用列表。
+        user_message: 用户消息原文（@deprecated v2：不再写入）。
+        assistant_message: 助理消息原文（@deprecated v2：不再写入）。
+        tool_calls: 本轮涉及的工具调用列表（@deprecated v2：不再写入）。
     """
 
     user_message: str | None = None
@@ -136,7 +136,8 @@ class WorkingMemorySnapshot:
     Attributes:
         session_id: 会话 ID。
         step_index: 快照时刻的步数。
-        messages: 完整的 messages 数组。
+        messages: 完整的 messages 数组（@deprecated v2：不再写入，
+            完整原始消息历史由 Session 组件持有，恢复时经 set_messages 注入）。
         message_count: 消息数量。
         total_tokens: 已知总 token 数（避免重算）。
         context_payload: ContextPayload 快照（dict 格式）。
@@ -187,7 +188,8 @@ class EpisodicMemoryEntry:
         turn_index: 第几轮对话（0-based）。
         created_at: 写入时间。
         summary: 压缩后的内容摘要。
-        raw_content: 原始对话全文。
+        raw_content: 原始对话全文（@deprecated v2：不再写入，
+            完整原始消息历史由 Session 组件持有）。
         content_type: 内容类型。
         source: 来源信息（用户消息 / 助理消息 / 工具调用）。
         entities: 提及的实体名列表。
@@ -378,7 +380,7 @@ class StepContext:
         entities_detected: 检测到的实体列表。
         topics_detected: 检测到的话题列表。
         summary: 压缩后的摘要文本。
-        raw: 原始对话文本。
+        raw: 原始对话文本（@deprecated v2：不再写入，原文由 Session 持有）。
     """
 
     user_message: str | None = None

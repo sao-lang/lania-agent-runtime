@@ -1,5 +1,53 @@
 ### 2026-08-15
 
+#### 4. Memory 按层 storage 注入（v2.2）
+
+- **时间：** 2026-08-15 15:14:58
+- **发起人：** user
+- **修改文件：**
+  - `src/memory/_service.py` — `MemoryService.__init__` 增加 `working/episodic/entity/semantic/pattern_persistence` 可选参数，未指定层回退默认 `persistence`；`close()` 对去重后的全部后端逐一关闭
+  - `docs/design/memory-system-design.md` — §3.1/§3.2 按层注入说明；§4.5 重写为 persistence 级注入示例；附录补充约定
+  - `README.md` — Memory 段落补充按层注入示例
+  - `tests/test_memory_storage_injection.py` — 新增 7 个用例（路由/回退/共享/close 去重/默认后端创建）
+- **修改内容：** 让 5 层记忆可各自绑定独立的 `MemoryPersistence` 后端（SQLite/Redis/PG/Neo4j 等），层与层之间 storage 彻底解耦；未注入的层自动回退到默认后端，向后兼容 `MemoryService(persistence=...)`。
+- **复盘结果：** 665 个测试全部通过；新增用例覆盖按层路由、回退、close 去重；ruff 检查通过（仅 `test_workflow_intent.py` 预存 N817 一条）。
+- **潜在风险：** `close()` 现在会关闭所有去重后的后端——共享同一实例只关一次；若某个自定义后端没有 `close()` 方法会静默跳过。真正的向量/图检索仍取决于各层后端与 Store 语义查询能力，本次只完成 storage 注入层。
+
+#### 3. v2.1 修订：system prompt 归属运行时配置 + 执行器消息传递修复
+
+- **时间：** 2026-08-15 15:20:00
+- **发起人：** user
+- **修改文件：**
+  - `src/runtime/_steps/_step_runner.py` — 序列化/组装后重建 ctx 再调执行器（run_step + run_llm_only）；dirty 路径“首条是 system 才替换，否则前置新 system”
+  - `src/session/_service.py` — `append_messages()` 过滤 system 消息；旧记录首条 system 自动剥离自愈
+  - `src/session/_models.py` / `_hooks/_commit.py` — 文档口径“对话消息历史（不含 system）”
+  - `docs/design/session-component-design.md` — 新增 §16“system prompt 归属与执行器消息传递（v2.1 修订）”
+  - `README.md` — Session 段落口径同步
+  - `tests/` — e2e 断言更新；新增换提示词续聊生效、执行器入参、旧记录自愈用例
+- **修改内容：** 修复“同一 session_id 续聊更换 system_prompt 不生效”与“执行器收到步前快照导致 system/最新消息丢失”两个问题：执行器经重建 ctx 收到序列化/组装后的完整消息；system prompt 唯一归属运行时配置，Session 历史只存 user/assistant/tool，恢复后由 ContextAssemblerHook 用运行时提示词组装。
+- **复盘结果：** 全量测试通过；dirty 路径语义保持（system 来自 payload、历史来自 controller.messages）；旧记录无需迁移、首次提交自愈。
+- **潜在风险：** 执行器入参变化属契约修正，第三方自定义执行器若依赖步前快照需适配；升级后首次续聊旧会话仍可能沿用旧 system 一次。
+
+#### 2. 实现 Session 组件 v2（唯一事实源 + 零耦合）+ Memory/Context 改造
+
+- **时间：** 2026-08-15 14:38:41
+- **发起人：** user
+- **修改文件：**
+  - `src/session/` — 新增 Session 组件（models / persistence / store / service / config / protocols / hooks）
+  - `src/runtime/_runtime.py` — `session_id` 注入；SESSION_START/END 先 Transform 后 Observer；session_end 事件带 last_error；run_stream 补 session_end
+  - `src/runtime/_helper_mixin.py` — `set_messages` / `set_step_index` writer 与实现；resume/destroy 先 Transform 后 Observer
+  - `src/runtime/context/_context.py` — RuntimeContext 新增 `set_messages` / `set_step_index`
+  - `src/runtime/_builder.py` — 新增 `.session()` / `.session_id()` 并注册 Session hooks
+  - `src/runtime/loops/_react.py` / `_plan_execute.py` / `_workflow.py` / `_helper_mixin.py` — AFTER_STEP 前重建 ctx（修复看不到本轮 assistant 回复的问题）
+  - `src/context/context_hooks/_assembler_hook.py` — 组装路径兜底 Runtime `system_prompt`（修复 system 提示词丢失）
+  - `src/memory/_types.py` / `_hooks/_commit.py` / `_service.py` — 停止写原文；字段标记 `@deprecated v2`；token_count 改按 summary
+  - `docs/design/`（memory-system-design / context-management-redesign / agent-runtime-design / session-component-design）、`README.md` — 统一"原文唯一归 Session"口径与 SESSION 挂载点顺序
+  - `pyproject.toml` — wheel packages 增加 `src/session`
+  - `tests/` — 新增 test_session_store/service/hooks/e2e；更新 test_builder / test_memory_service / test_context_manager
+- **修改内容：** 按 session-component-design.md v2 实现 Phase 1：Session 组件（会话生命周期、TTL、逐轮提交完整历史、user 索引）、Runtime 侧 session_id 注入与 `set_messages`/`set_step_index` writer、SESSION 挂载点先 Transform 后 Observer、Builder `.session()`/`.session_id()` 接线；Memory 停止写入消息原文（`raw_content=None`、hook 不再拼 raw），Context 保持纯编排；顺带修复 AFTER_STEP 快照陈旧与 system_prompt 丢失两个既有问题。
+- **复盘结果：** 653 个测试全部通过；新增 Session 代码覆盖率 91%–100%；全量覆盖率 85.74%（基线 HEAD 为 84.27%——96% 门槛在改动前已不达标，主要缺口在 PlanExecuteLoop/WorkflowLoop/OpenAI Provider/Memory stores 等既有模块）；ruff 检查通过（仅 `test_workflow_intent.py` 预存 N817 一条）。
+- **潜在风险：** 会话历史现在包含 system 消息（StepRunner 序列化后写回 controller.messages）；恢复历史后组装出的 system 内容沿用历史首条，仅当内容为空时以运行时 `system_prompt` 兜底——同一 session_id 更换 system_prompt 时需清空历史或显式覆盖（已知限制，见 grill-self-review.md）。`WorkingMemorySnapshot.messages` / `EpisodicMemoryEntry.raw_content` 保留字段但不再写入，读取旧数据不受影响。
+
 #### 1. Session 组件设计文档 v2：唯一事实源 + 零耦合边界
 
 - **时间：** 2026-08-15 04:38:19

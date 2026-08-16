@@ -94,7 +94,8 @@ class ReActLoop(LoopStrategy):
             # 执行单步（委托给 StepRunner，传入 controller）
             step_result: StepResult = await self._step_runner.run_step(ctx, ctl)
 
-            # 步后 hook：Transformer → Observer
+            # 步后 hook（重建 ctx，确保 after_step 看到本轮最新 messages，含 assistant 回复）
+            ctx = ctl.build_context()
             await self._run_after_step_hooks(ctx)
             ctl.budget.step_count += 1
 

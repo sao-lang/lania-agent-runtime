@@ -12,7 +12,9 @@ import pytest
 
 from src.context._config import ContextConfig
 from src.context._manager import ContextManager
+from src.context.context_hooks import ContextAssemblerHook
 from src.memory._types import EpisodicMemoryEntry, RecallResult
+from src.runtime.context._payload import ContextPayload
 
 
 @pytest.fixture
@@ -175,3 +177,31 @@ class TestContextManager:
         messages = await manager.assemble(ctx)
         assert isinstance(messages, list)
         assert len(messages) > 0
+
+
+class TestContextAssemblerHook:
+    """ContextAssemblerHook 单元测试。"""
+
+    async def test_fills_empty_system_prompt(self) -> None:
+        manager = MagicMock()
+        manager.assemble = AsyncMock(return_value=[{"role": "system", "content": ""}])
+        hook = ContextAssemblerHook(manager)
+        payload = ContextPayload(system_prompt="你是助手")
+        result = await hook(payload, MagicMock())
+        assert result.assembled_messages[0]["content"] == "你是助手"
+
+    async def test_inserts_system_message_when_missing(self) -> None:
+        manager = MagicMock()
+        manager.assemble = AsyncMock(return_value=[{"role": "user", "content": "hi"}])
+        hook = ContextAssemblerHook(manager)
+        payload = ContextPayload(system_prompt="sys")
+        result = await hook(payload, MagicMock())
+        assert result.assembled_messages[0] == {"role": "system", "content": "sys"}
+
+    async def test_keeps_existing_system_content(self) -> None:
+        manager = MagicMock()
+        manager.assemble = AsyncMock(return_value=[{"role": "system", "content": "已有提示"}])
+        hook = ContextAssemblerHook(manager)
+        payload = ContextPayload(system_prompt="新提示")
+        result = await hook(payload, MagicMock())
+        assert result.assembled_messages[0]["content"] == "已有提示"

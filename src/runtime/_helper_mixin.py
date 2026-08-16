@@ -76,6 +76,8 @@ class RuntimeHelperMixin:
             _set_plan_callback=self._set_plan_impl,
             _deduct_budget_callback=self._deduct_budget_impl,
             _update_context_payload_callback=self._update_context_payload_impl,
+            _set_messages_callback=self._set_messages_impl,
+            _set_step_index_callback=self._set_step_index_impl,
         )
 
     def _set_plan_impl(self, plan: dict) -> None:
@@ -91,6 +93,14 @@ class RuntimeHelperMixin:
     ) -> None:
         """Runtime 内部：更新 ContextPayload。"""
         self._context_payload = updater(self._context_payload)
+
+    def _set_messages_impl(self, messages: list[dict]) -> None:
+        """Runtime 内部：整体替换消息列表（Session 恢复历史）。"""
+        self._messages = list(messages)
+
+    def _set_step_index_impl(self, step_index: int) -> None:
+        """Runtime 内部：恢复 step 游标（Session 续聊对齐）。"""
+        self._step_index = step_index
 
     async def _handle_pause(self, pause_action: PauseAction) -> None:
         """处理暂停请求。"""
@@ -332,7 +342,8 @@ class RuntimeHelperMixin:
 
         await self._execute_step(next_step, ctx)
 
-        # after_step hooks
+        # after_step hooks（重建 ctx，确保看到本轮最新 messages，含 assistant 回复）
+        ctx = self._build_context()
         await self._hooks.run_transformers(HookPoint.AFTER_STEP, {}, ctx)
         self._budget.step_count += 1
 
@@ -354,11 +365,20 @@ class RuntimeHelperMixin:
             self._pause_state["is_paused"] = False
             self.status = RuntimeStatus.RUNNING
 
-            # session_resume hooks
+            # session_resume hooks（先 Transform 后 Observer）
             ctx = self._build_context()
+            event = {
+                "type": "session_resume",
+                "approval_id": approval_id,
+            }
+            event = await self._hooks.run_transformers(
+                HookPoint.SESSION_RESUME,
+                event,
+                ctx,
+            )
             await self._hooks.run_observers(
                 HookPoint.SESSION_RESUME,
-                {"type": "session_resume", "approval_id": approval_id},
+                event,
                 ctx,
             )
 
@@ -382,11 +402,14 @@ class RuntimeHelperMixin:
         """
         self.status = RuntimeStatus.ENDED
         ctx = self._build_context()
-        await self._hooks.run_observers(
-            HookPoint.SESSION_END,
-            {"type": "session_end", "status": "destroyed"},
-            ctx,
-        )
+        # session_end Transform → Observer
+        event = {
+            "type": "session_end",
+            "status": "destroyed",
+            "last_error": self._error_state["last_error"],
+        }
+        event = await self._hooks.run_transformers(HookPoint.SESSION_END, event, ctx)
+        await self._hooks.run_observers(HookPoint.SESSION_END, event, ctx)
         # 清空内部状态
         self._messages.clear()
         self._step_history.clear()

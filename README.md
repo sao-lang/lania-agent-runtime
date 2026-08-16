@@ -383,9 +383,46 @@ runtime = (AgentRuntime.builder()
     .build())
 ```
 
-记忆系统包含 5 层：工作记忆（崩溃恢复）、情景记忆（对话历史）、实体记忆（用户画像）、语义知识（概念图谱）、行为模式（风格偏好）。
+记忆系统包含 5 层：工作记忆（执行断点快照，不含消息原文）、情景记忆（轮次摘要，原文由 Session 持有）、实体记忆（用户画像）、语义知识（概念图谱）、行为模式（风格偏好）。
 
 详情见 [`docs/design/memory-system-design.md`](docs/design/memory-system-design.md) 和 [`docs/design/context-management-redesign.md`](docs/design/context-management-redesign.md)。
+
+每层记忆可以**单独注入 storage 后端**（未指定的层回退到默认 `persistence`），
+例如情景记忆接 PostgreSQL + pgvector、语义知识接图数据库：
+
+```python
+memory = MemoryService(
+    persistence=SQLitePersistence("./memory.db"),   # 默认后端
+    episodic_persistence=my_pg_backend,             # L2 单独后端
+    semantic_persistence=my_neo4j_backend,          # L4 单独后端
+)
+```
+
+### Session（会话组件）
+
+会话组件负责**会话身份、生命周期与完整对话消息历史的持久化（唯一事实源，不含 system）**。
+system prompt 属运行时配置，不写入会话历史。Memory 不再保存消息原文；
+`session_start` 时 Session 通过 `set_messages` / `set_step_index` 把历史恢复进 Runtime，
+`after_step` 逐轮提交对话消息，`session_end` 归档元数据与统计。
+
+```python
+from src.runtime import AgentRuntime
+from src.session import SessionConfig, SessionService
+from src.memory import MemoryService
+from src.memory._backends._sqlite import SQLitePersistence
+
+backend = SQLitePersistence("./runtime.db")  # 共享基础设施（按 key 前缀隔离，非耦合）
+runtime = (
+    AgentRuntime.builder()
+    .system_prompt("你是助手")
+    .session_id("sess_abc")  # 可选：续聊/审计时注入已有会话 ID
+    .session(SessionService(backend, config=SessionConfig()))
+    .memory(MemoryService(persistence=backend))
+    .build()
+)
+```
+
+详情见 [`docs/design/session-component-design.md`](docs/design/session-component-design.md)。
 
 ### Guardrails（治理组件，规划中）
 

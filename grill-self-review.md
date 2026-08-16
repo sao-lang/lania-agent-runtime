@@ -4,6 +4,96 @@
 
 ---
 
+## 第十一轮自省（2026-08-15）：Session 组件 v2 Phase 1 实现
+
+### 触发条件
+✅ 改 ≥3 文件 / 架构决策 / 基础设施变更（RuntimeContext 新增 writer、SESSION 挂载点顺序变更）
+
+### 四大维度自省
+
+**✅ 功能完整性**
+- 对照 session-component-design.md §15 Phase 1 checklist 逐项核对：`src/session/` 全部模块、Runtime 变更、Builder 接线、Memory 字段废弃均完成；Phase 2/3 项（SessionResumeHook/MemoryResumeHook、ssh 分块、跨会话检索）明确留待后续。
+
+**✅ 功能间联通**
+- E2E 测试验证 `session_start 恢复 → after_step 提交 → session_end 归档 → 续聊恢复` 全链路；Memory 摘要与 Session 原文各自落位（`raw_content=None` 断言通过）。
+- 自省发现并修复：AFTER_STEP 的 ctx 是步骤执行前快照（Session/Memory 看不到本轮 assistant 回复）——在 ReAct/PlanExecute/Workflow/`run_step()` 统一步后重建 ctx；ContextAssemblerHook 组装路径丢失 Runtime `system_prompt`——补空内容兜底。
+
+**✅ 模块间联通**
+- 零耦合验证清单通过：`src/session` 无 `import src.memory/src.context`（含 TYPE_CHECKING）；memory/context 无 `import src.session`；session 对 runtime 仅 TYPE_CHECKING；唯一接线点在 Builder。
+- 653 个既有+新增测试全部通过，无回归。
+
+**✅ 可用性**
+- E2E + 冒烟验证通过；ruff format/check 通过（仅 `test_workflow_intent.py` 预存 N817 一条）。
+
+### 发现的问题与处置
+| # | 问题 | 严重度 | 处置 |
+|---|------|--------|------|
+| S1 | AFTER_STEP 快照陈旧，本轮 assistant 回复不可见 | 严重 | 已修复（三种 Loop + run_step 步后重建 ctx） |
+| S2 | memory+context 启用时 system_prompt 在组装路径丢失 | 严重 | 已修复（ContextAssemblerHook 空内容兜底） |
+| M1 | 同一 session_id 更换 system_prompt 时，恢复历史沿用旧 system 消息 | 中等 | **已修复（v2.1）**：StepRunner 重建 ctx 传执行器 + Session 存储过滤 system，见第十二轮 |
+| M2 | 全量覆盖率 85.74%（门槛 96%） | 中等 | 基线 HEAD 为 84.27%——门槛在本次改动前已不达标（grill-self-review.md M16 已记录"coverage 83%→96% 需 3-5 小时"），主要缺口在 PlanExecuteLoop/WorkflowLoop/OpenAI Provider/Memory stores 等既有模块 |
+
+### 最终状态
+✅ 653 测试通过，Session 新增代码覆盖率 91%–100%，ruff 检查通过，设计文档与实现口径统一。
+
+---
+
+## 第十二轮自省（2026-08-15）：system prompt 归属与执行器消息传递修复
+
+### 触发条件
+✅ 架构决策 / 基础设施变更（执行器调用路径、Session 存储策略）
+
+### 四大维度自省
+
+**✅ 功能完整性**
+- L1：`run_step()` / `run_llm_only()` 序列化/组装后重建 ctx 再调执行器；dirty 路径按“首条是否 system”分支，恢复的纯对话历史不丢首条 user。
+- L2：`append_messages()` 过滤 system；旧记录首条 system 剥离自愈；`ContextAssemblerHook` 兜底让换提示词续聊立即生效。
+
+**✅ 功能间联通**
+- 诊断验证：修复前无 memory 场景执行器只收到 `[user]`；修复后应收到 `[system, user, ...]`。
+- 新增长验证用例：换提示词续聊、执行器入参、旧记录自愈。
+
+**✅ 模块间联通**
+- 内置 after_llm 治理 hook（Critique/Approval/Replan）不读 `ctx.messages`，仅读 services/budget/step_index——不受 fresh_ctx 影响（已核对源码）。
+- dirty 路径语义保持：system 来自 payload、历史来自 controller.messages，与旧逻辑一致。
+
+**✅ 可用性**
+- 全量测试 + ruff 通过；无 schema/API 变更，旧记录无需迁移。
+
+### 已知边界
+- 升级后**第一次**续聊旧会话仍可能沿用历史中的旧 system（该次提交后自愈）。
+- 第三方自定义执行器若依赖“收到步前快照”需适配（属契约修正，与 `LLMExecutor` 接口文档对齐）。
+
+---
+
+## 第十三轮自省（2026-08-15）：Memory 按层 storage 注入
+
+### 触发条件
+✅ 基础设施变更 / 架构决策（MemoryService 构造与 close 语义）
+
+### 四大维度自省
+
+**✅ 功能完整性**
+- 5 层各自可注入 `{layer}_persistence`，未指定回退默认 `persistence`；`close()` 对去重后的全部后端逐一关闭。
+
+**✅ 功能间联通**
+- Store 适配器无需改动（本就按层独立），`recall_raw`/`commit`/`checkpoint` 自动走各层后端；Builder 与 Session 共享后端场景不受影响。
+
+**✅ 模块间联通**
+- 向后兼容：`MemoryService(persistence=...)` 行为不变；全部既有测试通过。
+
+**✅ 可用性**
+- 665 测试全绿，新增 7 个用例覆盖路由/回退/共享/close 去重/默认创建。
+
+### 发现的问题与边界
+| # | 问题 | 处置 |
+|---|------|------|
+| M1 | `close()` 从“只关默认后端”变为“关全部去重后端”——共享实例只关一次（已用 id 去重） | 已实现并测试 |
+| M2 | 自定义后端无 `close()` 时静默跳过 | 与 MemoryPersistence 契约一致（close 非必选） |
+| M3 | 向量/图检索能力仍取决于各层后端实现，本次只完成 storage 注入层 | 记录为后续增强 |
+
+---
+
 ## 第一轮自省（2026-07-24 10:00）
 
 ### 发现的问题

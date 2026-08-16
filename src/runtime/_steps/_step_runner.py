@@ -172,19 +172,24 @@ class StepRunner:
         elif context_payload.is_dirty:
             serialized = await self._serializer.serialize(context_payload)
             if serialized:
-                controller.messages = (
-                    [serialized[0]] + controller.messages[1:] if controller.messages else serialized
-                )
+                if controller.messages and controller.messages[0].get("role") == "system":
+                    # 历史首条是 system：仅替换 system，保留其余历史
+                    controller.messages = [serialized[0]] + controller.messages[1:]
+                else:
+                    # 历史首条不是 system（如 Session 恢复的纯对话历史）：前置新 system
+                    controller.messages = [serialized[0]] + list(controller.messages)
 
         # LLM 调用（兼容新旧接口）
         executor = self._llm_executor
         if executor is None:
             return None
 
+        # 重建 ctx：确保执行器收到序列化/组装后的最新 messages（含 system）
+        fresh_ctx = controller.build_context()
         if hasattr(executor, "execute"):
-            llm_response: LLMResponse = await executor.execute(ctx)
+            llm_response: LLMResponse = await executor.execute(fresh_ctx)
         else:
-            raw = await executor(ctx)
+            raw = await executor(fresh_ctx)
             llm_response = controller.legacy_to_llm_response(raw)
 
         # 追加 LLM 回复
@@ -279,9 +284,12 @@ class StepRunner:
         elif context_payload.is_dirty:
             serialized = await self._serializer.serialize(context_payload)
             if serialized:
-                controller.messages = (
-                    [serialized[0]] + controller.messages[1:] if controller.messages else serialized
-                )
+                if controller.messages and controller.messages[0].get("role") == "system":
+                    # 历史首条是 system：仅替换 system，保留其余历史
+                    controller.messages = [serialized[0]] + controller.messages[1:]
+                else:
+                    # 历史首条不是 system（如 Session 恢复的纯对话历史）：前置新 system
+                    controller.messages = [serialized[0]] + list(controller.messages)
 
         # LLM 调用（兼容新旧接口）
         executor = self._llm_executor
@@ -292,10 +300,12 @@ class StepRunner:
                 error="LLM executor 未设置",
             )
 
+        # 重建 ctx：确保执行器收到序列化/组装后的最新 messages（含 system）
+        fresh_ctx = controller.build_context()
         if hasattr(executor, "execute"):
-            llm_response: LLMResponse = await executor.execute(ctx)
+            llm_response: LLMResponse = await executor.execute(fresh_ctx)
         else:
-            raw = await executor(ctx)
+            raw = await executor(fresh_ctx)
             llm_response = controller.legacy_to_llm_response(raw)
 
         # 追加 LLM 回复

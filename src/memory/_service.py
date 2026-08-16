@@ -81,18 +81,38 @@ class MemoryService:
 
         # 或使用自定义后端（Redis / 文件系统等）
         memory = MemoryService(persistence=MyCustomBackend())
+
+        # 或按层单独注入 storage（未指定的层回退到默认 persistence）
+        memory = MemoryService(
+            persistence=SQLitePersistence("./memory.db"),
+            episodic_persistence=MyPGPersistence(pg_pool),
+            semantic_persistence=MyNeo4jPersistence(driver),
+        )
     """
 
     def __init__(
         self,
         persistence: MemoryPersistence | None = None,
+        *,
+        working_persistence: MemoryPersistence | None = None,
+        episodic_persistence: MemoryPersistence | None = None,
+        entity_persistence: MemoryPersistence | None = None,
+        semantic_persistence: MemoryPersistence | None = None,
+        pattern_persistence: MemoryPersistence | None = None,
     ) -> None:
         """
         初始化 MemoryService。
 
         Args:
             persistence: MemoryPersistence 实例。不提供则自动创建
-                        SQLitePersistence("./memory.db")。
+                SQLitePersistence("./memory.db")，作为全部 5 层记忆的默认后端。
+            working_persistence: 可选，Layer 1（工作记忆）单独后端。
+            episodic_persistence: 可选，Layer 2（情景记忆）单独后端。
+            entity_persistence: 可选，Layer 3（实体记忆）单独后端。
+            semantic_persistence: 可选，Layer 4（语义知识）单独后端。
+            pattern_persistence: 可选，Layer 5（行为模式）单独后端。
+
+        未提供某一层的后端时，该层回退到默认 persistence。
         """
         if persistence is None:
             from src.memory._backends._sqlite import SQLitePersistence
@@ -102,11 +122,27 @@ class MemoryService:
         self._store = persistence
 
         # 内部 Store 适配器
-        self._working = WorkingMemoryStore(self._store)
-        self._episodic = EpisodicMemoryStore(self._store)
-        self._entity = EntityMemoryStore(self._store)
-        self._semantic = SemanticKnowledgeStore(self._store)
-        self._pattern = BehavioralPatternStore(self._store)
+        self._working = WorkingMemoryStore(working_persistence or self._store)
+        self._episodic = EpisodicMemoryStore(episodic_persistence or self._store)
+        self._entity = EntityMemoryStore(entity_persistence or self._store)
+        self._semantic = SemanticKnowledgeStore(semantic_persistence or self._store)
+        self._pattern = BehavioralPatternStore(pattern_persistence or self._store)
+
+        # 全部涉及的后端（去重），close() 时逐一关闭
+        self._backends: list[MemoryPersistence] = list(
+            {
+                id(b): b
+                for b in (
+                    self._store,
+                    working_persistence,
+                    episodic_persistence,
+                    entity_persistence,
+                    semantic_persistence,
+                    pattern_persistence,
+                )
+                if b is not None
+            }.values()
+        )
 
         # 后台任务跟踪
         self._bg_tasks = _BackgroundTaskGroup()
@@ -280,12 +316,13 @@ class MemoryService:
             user_id=user_id or "",
             turn_index=step_context.turn_index,
             summary=step_context.summary,
-            raw_content=step_context.raw,
+            # v2：不再写入原文（raw_content 标记 @deprecated v2，原文由 Session 组件持有）
+            raw_content=None,
             content_type=("critical_event" if step_context.importance > 0.7 else "raw"),
             entities=step_context.entities_detected,
             topics=step_context.topics_detected,
             importance=step_context.importance,
-            token_count=len(step_context.raw) if step_context.raw else 0,
+            token_count=len(step_context.summary) if step_context.summary else 0,
         )
         await self._episodic.write(entry)
 
@@ -450,7 +487,10 @@ class MemoryService:
                 await memory.close()
         """
         await self._bg_tasks.shutdown(wait=True)
-        await self._store.close()
+        for backend in self._backends:
+            close = getattr(backend, "close", None)
+            if callable(close):
+                await close()
 
     async def __aenter__(self) -> MemoryService:
         """异步上下文管理器入口。"""

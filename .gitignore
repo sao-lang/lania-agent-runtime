@@ -16,3 +16,5 @@ wheels/
 
 # Nested skills repo (shared across projects)
 .github/skills/
+# Local agent tooling metadata
+.agents/

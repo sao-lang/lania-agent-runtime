@@ -65,6 +65,7 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
         serializer: MessageSerializer | None = None,
         services: dict[str, Any] | None = None,
         agent_id: str = "",
+        session_id: str = "",
     ) -> None:
         """
         初始化 AgentRuntime——纯壳，不感知任何外部组件。
@@ -82,8 +83,9 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
             services: 外部服务引用字典。Builder 可在 build() 中注入
                 memory_service / context_manager / tools_schema 等服务。
             agent_id: Agent 标识。
+            session_id: 会话标识（续聊/审计时显式注入；为空自动生成）。
         """
-        self.session_id: str = f"sess_{uuid.uuid4().hex[:12]}"
+        self.session_id: str = session_id or f"sess_{uuid.uuid4().hex[:12]}"
         self.agent_id: str = agent_id or f"agent_{uuid.uuid4().hex[:8]}"
         self.status: RuntimeStatus = RuntimeStatus.IDLE
 
@@ -180,11 +182,21 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
         self.status = RuntimeStatus.RUNNING
 
         try:
-            # session_start hooks
+            # session_start hooks（先 Transform 后 Observer）
+            ctx = self._build_context()
+            event = {
+                "type": "session_start",
+                "input": user_input,
+            }
+            event = await self._hooks.run_transformers(
+                HookPoint.SESSION_START,
+                event,
+                ctx,
+            )
             await self._hooks.run_observers(
                 HookPoint.SESSION_START,
-                {"type": "session_start", "input": user_input},
-                self._build_context(),
+                event,
+                ctx,
             )
 
             # 添加用户消息
@@ -224,11 +236,22 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
                 RuntimeStatus.PAUSED,
             ):
                 self.status = RuntimeStatus.ENDED
-            # session_end hooks
+            # session_end hooks（先 Transform 后 Observer）
+            ctx = self._build_context()
+            event = {
+                "type": "session_end",
+                "status": self.status,
+                "last_error": self._error_state["last_error"],
+            }
+            event = await self._hooks.run_transformers(
+                HookPoint.SESSION_END,
+                event,
+                ctx,
+            )
             await self._hooks.run_observers(
                 HookPoint.SESSION_END,
-                {"type": "session_end", "status": self.status},
-                self._build_context(),
+                event,
+                ctx,
             )
 
     # ============ 流式执行 ============
@@ -255,11 +278,21 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
         self.status = RuntimeStatus.RUNNING
 
         try:
-            # session_start hooks
+            # session_start hooks（先 Transform 后 Observer）
+            ctx = self._build_context()
+            event = {
+                "type": "session_start",
+                "input": user_input,
+            }
+            event = await self._hooks.run_transformers(
+                HookPoint.SESSION_START,
+                event,
+                ctx,
+            )
             await self._hooks.run_observers(
                 HookPoint.SESSION_START,
-                {"type": "session_start", "input": user_input},
-                self._build_context(),
+                event,
+                ctx,
             )
 
             # 添加用户消息
@@ -295,6 +328,23 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
                 RuntimeStatus.PAUSED,
             ):
                 self.status = RuntimeStatus.ENDED
+            # session_end hooks（先 Transform 后 Observer）
+            ctx = self._build_context()
+            event = {
+                "type": "session_end",
+                "status": self.status,
+                "last_error": self._error_state["last_error"],
+            }
+            event = await self._hooks.run_transformers(
+                HookPoint.SESSION_END,
+                event,
+                ctx,
+            )
+            await self._hooks.run_observers(
+                HookPoint.SESSION_END,
+                event,
+                ctx,
+            )
 
     # ============ 内部方法 ============
 

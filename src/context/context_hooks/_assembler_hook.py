@@ -50,6 +50,16 @@ class ContextAssemblerHook:
             原样返回 data（不做修改）。
         """
         llm_messages = await self._manager.assemble(ctx)
+        # ContextManager 从 ctx.messages 推导 system_prompt；当 ctx 中没有 system 消息时
+        # （首轮或未恢复历史）会得到空内容，这里用 Runtime ContextPayload 的
+        # 权威 system_prompt 兜底，避免系统提示词丢失。
+        if llm_messages and getattr(data, "system_prompt", ""):
+            first = llm_messages[0]
+            if isinstance(first, dict) and first.get("role") == "system":
+                if not first.get("content"):
+                    llm_messages[0] = {**first, "content": data.system_prompt}
+            else:
+                llm_messages.insert(0, {"role": "system", "content": data.system_prompt})
         # 存入 data.assembled_messages，Runtime 会检查此字段
         data.assembled_messages = llm_messages
         return data

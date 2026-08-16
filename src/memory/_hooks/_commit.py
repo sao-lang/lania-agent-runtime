@@ -86,7 +86,8 @@ class MemoryCommitHook:
                 return data
 
             # 构建 StepContext
-            _raw_content = str(user_message or "") + "\n" + str(assistant_message or "")
+            # v2：不再写入原文（raw 字段 @deprecated v2，原文由 Session 组件持有），
+            # 只写摘要供情景记忆检索。
             step_ctx = StepContext(
                 user_message=user_message,
                 assistant_message=assistant_message,
@@ -98,7 +99,6 @@ class MemoryCommitHook:
                     (user_message or "")[:200]
                     + (" | " + (assistant_message or "")[:200] if assistant_message else "")
                 ),
-                raw=_raw_content[:16384],  # 限制 16KB
             )
 
         except Exception:

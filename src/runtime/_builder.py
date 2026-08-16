@@ -50,6 +50,9 @@ class RuntimeBuilder:
         self._skill_manager: SkillManager | None = None
         self._memory_service: Any | None = None
         self._context_config: Any | None = None
+        self._session_service: Any | None = None
+        self._session_config: Any | None = None
+        self._session_id: str = ""
 
     def system_prompt(self, prompt: str) -> RuntimeBuilder:
         """
@@ -176,6 +179,43 @@ class RuntimeBuilder:
             self（链式调用）。
         """
         self._context_config = config
+        return self
+
+    def session(
+        self,
+        service: Any,
+        config: Any | None = None,
+    ) -> RuntimeBuilder:
+        """
+        注入会话服务（数据层）。
+
+        传入已组装好的 SessionService 实例，build() 将自动注册
+        SessionStartHook（session_start）、SessionCommitHook（after_step）
+        和 SessionEndHook（session_end）。
+
+        Args:
+            service: SessionService 实例。可与 MemoryService 共享同一
+                persistence 后端（按 key 前缀隔离，非耦合）。
+            config: 可选的 SessionConfig 实例。
+
+        Returns:
+            self（链式调用）。
+        """
+        self._session_service = service
+        self._session_config = config
+        return self
+
+    def session_id(self, session_id: str) -> RuntimeBuilder:
+        """
+        设置会话 ID（续聊/审计场景显式注入已有会话）。
+
+        Args:
+            session_id: 会话 ID。
+
+        Returns:
+            self（链式调用）。
+        """
+        self._session_id = session_id
         return self
 
     def loop(
@@ -384,6 +424,36 @@ class RuntimeBuilder:
                 priority=500,
             )
 
+        # 注册 Session hooks（Session 提交原文在 Memory 沉淀摘要之前）
+        if self._session_service is not None:
+            from src.session import SessionCommitHook, SessionEndHook, SessionStartHook
+
+            if self._hooks is None:
+                self._hooks = HookRegistry()
+            from src.runtime._types import HookPoint, PrimitiveType
+
+            self._hooks.register(
+                HookPoint.SESSION_START,
+                SessionStartHook(self._session_service, config=self._session_config),
+                primitive=PrimitiveType.TRANSFORM,
+                name="_session_start",
+                priority=10,
+            )
+            self._hooks.register(
+                HookPoint.AFTER_STEP,
+                SessionCommitHook(self._session_service, config=self._session_config),
+                primitive=PrimitiveType.TRANSFORM,
+                name="_session_commit",
+                priority=400,
+            )
+            self._hooks.register(
+                HookPoint.SESSION_END,
+                SessionEndHook(self._session_service),
+                primitive=PrimitiveType.TRANSFORM,
+                name="_session_end",
+                priority=10,
+            )
+
         # 构建 Runtime（纯壳——不传任何外部组件参数）
         runtime = AgentRuntime(
             system_prompt=self._system_prompt,
@@ -395,6 +465,7 @@ class RuntimeBuilder:
             router=self._router,
             services=self._services or None,
             agent_id=self._agent_id,
+            session_id=self._session_id,
         )
 
         # 检查 .context() 是否被错误地单独使用（无 .memory()）
