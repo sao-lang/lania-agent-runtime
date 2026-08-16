@@ -633,9 +633,13 @@ SESSION_RESUME (Transform)
 
 ### Phase 2 — 增强
 
-1. SessionResumeHook + MemoryResumeHook（Builder 并列注册）
-2. 消息分块（`ssh:` 前缀）与历史裁剪策略
-3. `list_user_sessions` 分页 / 状态过滤
+> ✅ **Phase 2 已实现**（2026-08-16）。实现细节：
+> - RuntimeContext 新增 `set_budget` / `set_pause_state` 受限 writer（Memory 侧恢复断点用）；
+> - `ssh:` 分块存储由 `SessionStore` 统一处理（`chunk_size` 阈值，超阈值分块、重读重组、切换布局清理残留）。
+
+1. [x] SessionResumeHook + MemoryResumeHook（Builder 并列注册）
+2. [x] 消息分块（`ssh:` 前缀）与历史裁剪策略
+3. [x] `list_user_sessions` 分页 / 状态过滤
 
 ### Phase 3 — 高级
 

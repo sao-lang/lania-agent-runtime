@@ -1,3 +1,61 @@
+### 2026-08-16
+
+#### 4. Memory 向量/图检索增强（L4）
+
+- **时间：** 2026-08-16 21:50:00
+- **发起人：** user
+- **修改文件：**
+  - `src/memory/_embedding.py` — 新增 EmbeddingProvider 协议 + HashEmbeddingProvider（纯 Python 特征哈希）
+  - `src/memory/_stores/_semantic.py` — search_nodes 向量检索 / ensure_embeddings / search_related
+  - `src/memory/_service.py` — embedding_provider 注入 + recall_graph
+  - `src/memory/__init__.py` — 导出嵌入类型
+  - `docs/design/memory-system-design.md`、`README.md`
+  - `tests/test_memory_embedding.py` — 新增 14 个用例
+- **修改内容：** 补齐 L4 语义层的向量/图检索能力：`search_nodes` 配置 EmbeddingProvider 后按 embedding 余弦相似度排序（未嵌入节点回退关键词，threshold 仅约束向量路径）；`ensure_embeddings` 批量生成缺失向量；`search_related` / `recall_graph` 做语义命中 + 图扩展检索。
+- **复盘结果：** 全量 867 测试通过，覆盖率保持 96%。
+- **潜在风险：** HashEmbeddingProvider 是特征哈希近似，生产级语义检索建议替换为模型 embedding；向量路径的 threshold 语义与关键词路径不同（仅约束向量分）。
+
+#### 3. 覆盖率提升至 96% 并修复测试暴露的三个缺陷
+
+- **时间：** 2026-08-16 21:20:00
+- **发起人：** user
+- **修改文件：**
+  - `tests/test_coverage_{loops,llm,memory,context,runtime,memory_management}.py` — 新增 6 个补测文件（约 180 用例）
+  - `src/memory/_service.py` — 修复 `_BackgroundTaskGroup.shutdown` 孤儿任务（嵌套任务未被等待）
+  - `src/context/__init__.py` — 修复惰性导出映射（ContextManager/BudgetController 指向不存在模块）
+  - `src/runtime/_runtime.py` — 修复 run_stream 无法消费 ReAct/Workflow 扩展事件字段
+  - `tests/test_memory_persistence.py` — 加固偶发失败的 TTL 测试
+- **修改内容：** 覆盖率 86% → 96%（fail_under=96 达标），853 测试通过；补测过程中发现并修复三个真实缺陷。
+- **复盘结果：** ruff 零报错（仅预存 N817）。
+- **潜在风险：** run_stream 事件字段过滤会丢弃 loop 扩展字段（如 step/node_id），消费方需改用 metadata。
+
+#### 2. Session 组件 Phase 2：断点恢复 + 消息分块 + 分页
+
+- **时间：** 2026-08-16 21:05:00
+- **发起人：** user
+- **修改文件：**
+  - `src/session/_hooks/_resume.py`、`src/memory/_hooks/_resume.py`、`src/memory/_protocols.py` — 新增
+  - `src/runtime/context/_context.py`、`src/runtime/_helper_mixin.py` — set_budget / set_pause_state writer
+  - `src/session/_store.py` / `_service.py` / `_models.py` / `_config.py` — ssh: 分块与分页
+  - `src/runtime/_builder.py` — 并列注册 Resume Hooks
+  - `tests/test_session_phase2.py` — 新增 18 个用例
+- **修改内容：** SessionResumeHook 恢复历史与游标、MemoryResumeHook 恢复 plan/budget/pause_state；历史消息支持 `ssh:` 分块存储与裁剪；`list_user_sessions` 增加 offset 分页。
+- **复盘结果：** 全量 683 测试通过。
+- **潜在风险：** chunk_size 默认 100，超阈值记录从内联切换为分块布局（重读自动重组）；`ssh:` 分块为新增 key 前缀，旧数据无需迁移。
+
+#### 1. 文档口径更新（第 5 项）
+
+- **时间：** 2026-08-16 21:55:00
+- **发起人：** user
+- **修改文件：**
+  - `README.md` — 治理组件口径（Hook 已内置、插件封装规划中）、Memory 向量/图检索说明
+  - `docs/design/agent-runtime-design.md` — Phase 2/3 实现状态标注
+  - `docs/design/session-component-design.md` — Phase 2 勾选
+  - `docs/design/memory-system-design.md` — 向量/图检索实现状态
+  - `grill-self-review.md` — 第十四轮自省
+- **修改内容：** 纯文档变更，对齐实现与文档口径；第 6 项（编排高级模式）按用户要求暂不规划。
+- **复盘结果：** N/A（纯文档）
+- **潜在风险：** 无
 ### 2026-08-15
 
 #### 4. Memory 按层 storage 注入（v2.2）

@@ -1,3 +1,36 @@
+## 第十四轮自省（2026-08-16）：Session Phase 2 + 覆盖率 96% + Memory 检索增强
+
+### 触发条件
+✅ 改 ≥3 文件 / 架构决策 / 基础设施变更（RuntimeContext writer、存储布局、语义检索）
+
+### 四大维度自省
+
+**✅ 功能完整性**
+- Session Phase 2 三项（Resume Hooks / ssh: 分块 / 分页过滤）全部实现并勾选设计文档；
+- Memory L4 向量检索（EmbeddingProvider + 余弦排序 + 关键词回退）与图扩展检索（search_related / recall_graph）落地。
+
+**✅ 功能间联通**
+- 覆盖率 86% → 96%（fail_under=96 达标），全量 867 测试通过；
+- 补测暴露并修复 3 个真实缺陷：后台任务孤儿（close 后仍写库）、context 惰性导出映射错误、run_stream 事件字段不兼容。
+
+**✅ 模块间联通**
+- 零耦合约束保持：session/memory/context 无新增运行期互相导入；MemoryResumeHook 仅依赖 MemoryResumeProtocol。
+
+**✅ 可用性**
+- ruff 零报错（仅预存 N817）；TTL 偶发失败测试已加固。
+
+### 发现的问题与处置
+| # | 问题 | 严重度 | 处置 |
+|---|------|--------|------|
+| G1 | `_BackgroundTaskGroup.shutdown` 等待期间新生成的任务被 clear() 孤儿化 | 严重 | 改为循环排空（含超时取消） |
+| G2 | `src.context.__getattr__` 惰性映射指向 `_contextmanager` 等不存在模块 | 中等 | 改为显式模块映射表 |
+| G3 | `runtime.run_stream` 对 ReAct/Workflow 扩展事件字段抛 TypeError | 严重 | 边界过滤字段后构造 StreamEvent |
+| G4 | TTL 未过期测试在全量负载下偶发失败（1s TTL） | 轻微 | 未过期用例改用 10s TTL fixture |
+
+### 最终状态
+✅ 867 测试通过、覆盖率 96%、ruff 零报错（预存 N817 除外）；Session Phase 2 / Memory 向量图检索 / 文档口径全部落地。
+
+---
 # 自省回顾：Grill-Me 驱动的全面修复
 
 > 2026-07-24，通过 10 轮自我拷问驱动，对 lania-agent-runtime 完成全量代码审查和修复。累计修复 **97 项**，575 测试全绿，ruff 零报错，`__import__` hack 清零。
