@@ -1,5 +1,17 @@
 ### 2026-08-16
 
+#### 6. WorkflowLoop max_iterations 安全网
+
+- **时间：** 2026-08-16 22:20:00
+- **发起人：** user
+- **修改文件：**
+  - `src/runtime/loops/_workflow.py` — `WorkflowLoop.__init__` 新增 `max_iterations`（0 = 不限制），run/run_stream 循环内计数截停
+  - `docs/design/loop-strategy-design.md` — 安全网说明
+  - `tests/test_coverage_loops.py` — 新增 4 个用例
+  - `overview.md`、`grill-self-review.md`
+- **修改内容：** 为经 ConditionNode 但分支永不走出口的环提供最终安全网：`max_iterations` 限制单次 run 的最大节点执行次数，超限后停止并记录 warning；默认 0 不限制，向后兼容。
+- **复盘结果：** 全量 875 测试通过，覆盖率保持 96%，ruff 零报错。
+- **潜在风险：** 截停是静默停止（与 ReAct/PlanExecute 的 max_iterations 行为一致），宿主如需感知需自行判断工作流是否到达终点。
 #### 5. Workflow 无条件环检测修复
 
 - **时间：** 2026-08-16 22:10:00

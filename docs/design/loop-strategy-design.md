@@ -285,7 +285,8 @@ while current_node_id and not (paused/error/ended/cancelled):
 - `visited` 集合做依赖检查（确保前置节点已执行）
 - **无条件环检测（2026-08-16 实现）**：仅由 Fixed/Agent 边构成的环（如 a→a 自环、a→b→a）没有任何出口，
   启动前由 `WorkflowDefinition.assert_no_unconditional_cycles()` 静态检测并抛 `WorkflowError`；
-  经 ConditionNode 的环视为"可能退出"，保留循环能力（分支负责在运行时跳出，避免无限循环）
+  经 ConditionNode 的环视为"可能退出"，保留循环能力（分支负责在运行时跳出，避免无限循环）；
+  若分支永不走出口，可由 `WorkflowLoop(max_iterations=N)` 作为最终安全网强制截停（0 = 不限制，默认）
 
 ---
 

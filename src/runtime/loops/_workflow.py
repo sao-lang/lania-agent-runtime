@@ -13,6 +13,7 @@ WorkflowLoop —— 固定 DAG + Agent 决策节点策略。
 from __future__ import annotations
 
 import inspect
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -46,6 +47,9 @@ class NodeType(Enum):
 # 预期组件:
 #   - SubAgentSpec: 子 Agent 规格定义
 #   - AgentTool: 作为 Tool 注册到 Runtime，内部创建子 Runtime 执行
+
+
+logger = logging.getLogger(__name__)
 
 
 class WorkflowError(Exception):
@@ -683,6 +687,7 @@ class WorkflowLoop(LoopStrategy):
         controller: Any,
         workflow_definition: WorkflowDefinition,
         router: Any | None = None,
+        max_iterations: int = 0,
     ) -> None:
         """
         初始化 WorkflowLoop。
@@ -693,9 +698,12 @@ class WorkflowLoop(LoopStrategy):
             controller: RuntimeController 实例。
             workflow_definition: 工作流定义。
             router: 可选的路由函数。
+            max_iterations: 最大节点执行次数（安全网），0 表示不限制（默认）。
+                经 ConditionNode 的环若分支永不走出口，会由该上限强制停止。
         """
         super().__init__(hooks, step_runner, controller, router)
         self._workflow = workflow_definition
+        self._max_iterations = max_iterations
 
     async def run(self, ctx: RuntimeContext) -> None:
         """
@@ -716,10 +724,21 @@ class WorkflowLoop(LoopStrategy):
         ctl = self._controller
         current_node_id: str | None = self._workflow.start_node_id
         visited: set[str] = set()
+        iteration = 0
 
         while current_node_id is not None:
             if ctl.status != RuntimeStatus.RUNNING:
                 break
+
+            # 安全网：达到最大迭代次数后停止（0 = 不限制）
+            if self._max_iterations > 0 and iteration >= self._max_iterations:
+                logger.warning(
+                    "WorkflowLoop 达到最大迭代次数 %d，已停止（current=%s）",
+                    self._max_iterations,
+                    current_node_id,
+                )
+                break
+            iteration += 1
 
             node = self._workflow.get_node(current_node_id)
 
@@ -777,10 +796,21 @@ class WorkflowLoop(LoopStrategy):
         ctl = self._controller
         current_node_id: str | None = self._workflow.start_node_id
         visited: set[str] = set()
+        iteration = 0
 
         while current_node_id is not None:
             if ctl.status != RuntimeStatus.RUNNING:
                 break
+
+            # 安全网：达到最大迭代次数后停止（0 = 不限制）
+            if self._max_iterations > 0 and iteration >= self._max_iterations:
+                logger.warning(
+                    "WorkflowLoop 达到最大迭代次数 %d，已停止（current=%s）",
+                    self._max_iterations,
+                    current_node_id,
+                )
+                break
+            iteration += 1
 
             node = self._workflow.get_node(current_node_id)
 

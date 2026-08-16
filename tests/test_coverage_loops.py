@@ -707,3 +707,93 @@ class TestWorkflowCycleDetection:
         )
         await loop.run(runtime._build_context())
         assert executed == ["a", "a", "exit"]
+
+
+class TestWorkflowMaxIterations:
+    """WorkflowLoop max_iterations 安全网测试。"""
+
+    async def test_condition_loop_without_exit_stops_at_limit(self) -> None:
+        runtime = make_runtime("react")
+        executed: list[str] = []
+
+        def mark_a(ctx: Any) -> None:
+            executed.append("a")
+
+        async def never_exit(ctx: Any) -> str:
+            executed.append("route")
+            return "back"
+
+        wf = WorkflowDefinition()
+        wf.add_node(FixedNode("a", handler=mark_a))
+        wf.add_node(ConditionNode("route", condition_fn=never_exit))
+        wf.add_edge("a", "route")
+        wf.add_condition("route", {"back": "a"})
+        wf.start_node_id = "a"
+        loop = WorkflowLoop(
+            hooks=runtime._hooks,
+            step_runner=StubStepRunner(),
+            controller=runtime._controller,
+            workflow_definition=wf,
+            max_iterations=3,
+        )
+        await loop.run(runtime._build_context())
+        # a → route → a 共 3 次节点执行后被截停，不再无限循环
+        assert executed == ["a", "route", "a"]
+
+    async def test_run_stream_stops_at_limit(self) -> None:
+        runtime = make_runtime("react")
+
+        async def never_exit(ctx: Any) -> str:
+            return "back"
+
+        wf = WorkflowDefinition()
+        wf.add_node(FixedNode("a", handler=lambda ctx: None))
+        wf.add_node(ConditionNode("route", condition_fn=never_exit))
+        wf.add_edge("a", "route")
+        wf.add_condition("route", {"back": "a"})
+        wf.start_node_id = "a"
+        loop = WorkflowLoop(
+            hooks=runtime._hooks,
+            step_runner=StubStepRunner(),
+            controller=runtime._controller,
+            workflow_definition=wf,
+            max_iterations=2,
+        )
+        events = [e async for e in loop.run_stream(runtime._build_context())]
+        assert [e["type"] for e in events].count("node_start") == 2
+
+    async def test_linear_workflow_respects_limit(self) -> None:
+        runtime = make_runtime("react")
+        executed: list[str] = []
+        wf = WorkflowDefinition()
+        wf.add_node(FixedNode("a", handler=lambda ctx: executed.append("a")))
+        wf.add_node(FixedNode("b", handler=lambda ctx: executed.append("b")))
+        wf.add_edge("a", "b")
+        wf.start_node_id = "a"
+        loop = WorkflowLoop(
+            hooks=runtime._hooks,
+            step_runner=StubStepRunner(),
+            controller=runtime._controller,
+            workflow_definition=wf,
+            max_iterations=1,
+        )
+        await loop.run(runtime._build_context())
+        assert executed == ["a"]
+
+    async def test_zero_limit_means_unlimited(self) -> None:
+        runtime = make_runtime("react")
+        executed: list[str] = []
+        wf = WorkflowDefinition()
+        wf.add_node(FixedNode("a", handler=lambda ctx: executed.append("a")))
+        wf.add_node(FixedNode("b", handler=lambda ctx: executed.append("b")))
+        wf.add_edge("a", "b")
+        wf.start_node_id = "a"
+        loop = WorkflowLoop(
+            hooks=runtime._hooks,
+            step_runner=StubStepRunner(),
+            controller=runtime._controller,
+            workflow_definition=wf,
+            max_iterations=0,
+        )
+        await loop.run(runtime._build_context())
+        assert executed == ["a", "b"]
