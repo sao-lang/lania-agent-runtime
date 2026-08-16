@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 from src.memory._persistence import MemoryPersistence
@@ -45,26 +46,38 @@ class _BackgroundTaskGroup:
     async def shutdown(self, wait: bool = True, timeout: float = 30.0) -> None:
         """等待所有后台任务完成（或取消）。
 
+        循环排空直到任务集合为空：等待期间新生成的任务（如实体管线
+        触发的语义管线）也会被纳入等待，避免 close() 后孤儿任务
+        继续访问已关闭的后端。
+
         Args:
             wait: True 等待完成，False 取消所有任务。
             timeout: 最大等待秒数，超时后强制取消剩余任务。
         """
-        if not self._tasks:
-            return
-        if wait:
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(*self._tasks, return_exceptions=True),
-                    timeout=timeout,
-                )
-            except asyncio.TimeoutError:
+        deadline = time.monotonic() + timeout
+        while self._tasks:
+            snapshot = list(self._tasks)
+            if wait:
+                remaining = max(0.0, deadline - time.monotonic())
+                if remaining <= 0:
+                    for t in self._tasks:
+                        t.cancel()
+                    await asyncio.gather(*self._tasks, return_exceptions=True)
+                    break
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*snapshot, return_exceptions=True),
+                        timeout=remaining,
+                    )
+                except asyncio.TimeoutError:
+                    for t in self._tasks:
+                        t.cancel()
+                    await asyncio.gather(*self._tasks, return_exceptions=True)
+                    break
+            else:
                 for t in self._tasks:
                     t.cancel()
                 await asyncio.gather(*self._tasks, return_exceptions=True)
-        else:
-            for t in self._tasks:
-                t.cancel()
-            await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
 
 

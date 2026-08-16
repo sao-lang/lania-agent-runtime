@@ -38,8 +38,16 @@ async def store(db_path: str) -> SQLitePersistence:
 
 @pytest.fixture
 async def store_with_ttl(db_path: str) -> SQLitePersistence:
-    """创建带 TTL 的 SQLitePersistence 实例。"""
+    """创建带 1 秒 TTL 的 SQLitePersistence 实例（过期测试用）。"""
     store = SQLitePersistence(db_path, default_ttl_seconds=1)
+    yield store
+    await store.close()
+
+
+@pytest.fixture
+async def store_with_long_ttl(db_path: str) -> SQLitePersistence:
+    """创建带较长 TTL 的 SQLitePersistence 实例（未过期测试用，避免负载下偶发过期）。"""
+    store = SQLitePersistence(db_path, default_ttl_seconds=10)
     yield store
     await store.close()
 
@@ -170,10 +178,10 @@ class TestSQLitePersistence:
 class TestSQLitePersistenceWithTTL:
     """SQLitePersistence TTL 过期测试。"""
 
-    async def test_ttl_not_expired(self, store_with_ttl: SQLitePersistence) -> None:
+    async def test_ttl_not_expired(self, store_with_long_ttl: SQLitePersistence) -> None:
         """测试 TTL 未过期时数据可读取。"""
-        await store_with_ttl.put("temp", b"data")
-        result = await store_with_ttl.get("temp")
+        await store_with_long_ttl.put("temp", b"data")
+        result = await store_with_long_ttl.get("temp")
         assert result == b"data"
 
     async def test_ttl_expired(self, store_with_ttl: SQLitePersistence) -> None:

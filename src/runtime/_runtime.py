@@ -301,7 +301,11 @@ class AgentRuntime(HookRegistratorMixin, EngineSettersMixin, RuntimeHelperMixin)
             # 使用 LoopStrategy 流式执行
             ctx = self._build_context()
             async for event in self._loop.run_stream(ctx):
-                yield StreamEvent(**event)
+                # 过滤 loop 事件中的扩展字段（如 step/node_id），
+                # 保证 StreamEvent 构造兼容（ReAct/Workflow 流式事件均可消费）
+                yield StreamEvent(
+                    **{k: v for k, v in event.items() if k in StreamEvent.__dataclass_fields__}
+                )
             yield StreamEvent(
                 type="done",
                 metadata={"result": self._make_result()},

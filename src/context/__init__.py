@@ -45,19 +45,16 @@ def __getattr__(name: str) -> Any:
     """惰性导入，避免启动时循环依赖。"""
     import importlib
 
-    extra = {
-        "ContextManager",
-        "Selector",
-        "Compressor",
-        "BudgetController",
-        "TokenManager",
-        "ContextAssemblerHook",
+    module_map = {
+        "ContextManager": "src.context._manager",
+        "Selector": "src.context._selector",
+        "Compressor": "src.context._compressor",
+        "BudgetController": "src.context._budget",
+        "TokenManager": "src.context._budget",
+        "ContextAssemblerHook": "src.context.context_hooks",
     }
-    if name in extra:
-        if name == "ContextAssemblerHook":
-            mod = importlib.import_module("src.context.context_hooks")
-            return getattr(mod, name)
-        mod = importlib.import_module(f"src.context._{name.lower()}")
+    if name in module_map:
+        mod = importlib.import_module(module_map[name])
         return getattr(mod, name)
     msg = f"module {__name__!r} has no attribute {name!r}"
     raise AttributeError(msg)
