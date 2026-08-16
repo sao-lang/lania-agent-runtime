@@ -282,7 +282,10 @@ while current_node_id and not (paused/error/ended/cancelled):
 - `AgentNode` 内部使用 `StepRunner.run_step()`，与 ReActLoop 复用同一套单步逻辑
 - `ConditionNode` 的 `condition_fn` 通过 `WorkflowDefinition.add_condition()` 注入
 - 运行时图遍历替代拓扑排序，天然支持分支和条件跳转
-- `visited` 集合做依赖检查（确保前置节点已执行），同时防止循环图中无限循环
+- `visited` 集合做依赖检查（确保前置节点已执行）
+- **无条件环检测（2026-08-16 实现）**：仅由 Fixed/Agent 边构成的环（如 a→a 自环、a→b→a）没有任何出口，
+  启动前由 `WorkflowDefinition.assert_no_unconditional_cycles()` 静态检测并抛 `WorkflowError`；
+  经 ConditionNode 的环视为"可能退出"，保留循环能力（分支负责在运行时跳出，避免无限循环）
 
 ---
 

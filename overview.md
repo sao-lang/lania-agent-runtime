@@ -1,5 +1,17 @@
 ### 2026-08-16
 
+#### 5. Workflow 无条件环检测修复
+
+- **时间：** 2026-08-16 22:10:00
+- **发起人：** user
+- **修改文件：**
+  - `src/runtime/loops/_workflow.py` — 新增 `assert_no_unconditional_cycles()`，run/run_stream 启动时调用；移除失效的 in_path 循环检测
+  - `docs/design/loop-strategy-design.md` — 环检测语义说明
+  - `tests/test_coverage_loops.py` — 新增 4 个用例（自环/固定环报错、run_stream 错误事件、条件环保留）
+  - `overview.md`、`grill-self-review.md`
+- **修改内容：** 修复 Workflow 自环（a→a）与固定节点环（a→b→a）会无限循环的问题：原 in_path 检测在顺序遍历中永远不触发，现改为启动前静态检测"无条件环"（仅由 Fixed/Agent 边构成）并抛 WorkflowError；经 ConditionNode 的环保留（分支负责运行时退出），符合"支持循环图结构"的设计语义。
+- **复盘结果：** 全量 871 测试通过，覆盖率保持 96%，ruff 零报错。
+- **潜在风险：** 经 ConditionNode 且分支永不走出口的环仍会无限循环（无 max_iterations 兜底），属于宿主编排职责，文档已注明。
 #### 4. Memory 向量/图检索增强（L4）
 
 - **时间：** 2026-08-16 21:50:00

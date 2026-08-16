@@ -528,6 +528,42 @@ class WorkflowDefinition:
         """重置意图分类结果（WorkflowLoop 每轮执行前调用）。"""
         self._intent_results.clear()
 
+    def assert_no_unconditional_cycles(self) -> None:
+        """检测无条件循环依赖（仅由 Fixed/Agent 边构成的环）。
+
+        运行时图遍历中，经 ConditionNode 的环可以在分支处退出（如
+        "重试 N 次后走出口"），视为合法循环；但完全由 Fixed/Agent 边
+        构成的环（如 a→a 自环、a→b→a）没有任何出口，任何一次执行都
+        会无限循环。此类环在启动前静态检测并直接抛出 WorkflowError。
+
+        Raises:
+            WorkflowError: 检测到无条件循环依赖时。
+        """
+        # 缩减图：Fixed/Agent 节点只保留第一条出边（next_node 语义），
+        # ConditionNode 视为潜在出口，不参与静态环判定。
+        white, gray, black = 0, 1, 2
+        color: dict[str, int] = {node_id: white for node_id in self._nodes}
+        adjacency: dict[str, list[str]] = {}
+        for node_id, node in self._nodes.items():
+            if isinstance(node, ConditionNode):
+                adjacency[node_id] = []
+            else:
+                nxt = self.next_node(node_id)
+                adjacency[node_id] = [nxt] if nxt else []
+
+        def visit(node_id: str) -> None:
+            color[node_id] = gray
+            for target in adjacency[node_id]:
+                if color[target] == gray:
+                    raise WorkflowError(f"检测到无条件循环依赖: {node_id} → {target}")
+                if color[target] == white:
+                    visit(target)
+            color[node_id] = black
+
+        for node_id in self._nodes:
+            if color[node_id] == white:
+                visit(node_id)
+
     def to_dict(self) -> dict:
         """
         序列化为字典（支持 JSON 导出）。
@@ -665,35 +701,32 @@ class WorkflowLoop(LoopStrategy):
         """
         执行工作流。
 
-        从 start_node_id 开始运行时图遍历，支持线性、分支和循环图结构。
+        从 start_node_id 开始运行时图遍历，支持线性、分支和循环图结构；
+        仅由 Fixed/Agent 边构成的无条件环（如 a→a 自环）在启动时静态检测并报错，
+        经 ConditionNode 的环允许（分支负责在运行时退出）。
 
         Args:
             ctx: RuntimeContext 实例。
         """
         # 重置意图路由状态，避免多轮重用闭包变量
         self._workflow.reset_intent_results()
+        # 启动前静态检测无条件环（Fixed/Agent 边环必然无限循环），直接报错
+        self._workflow.assert_no_unconditional_cycles()
 
         ctl = self._controller
         current_node_id: str | None = self._workflow.start_node_id
         visited: set[str] = set()
-        in_path: set[str] = set()  # 当前遍历路径，用于循环检测
 
         while current_node_id is not None:
             if ctl.status != RuntimeStatus.RUNNING:
                 break
 
-            # 循环依赖检测
-            if current_node_id in in_path:
-                raise WorkflowError(f"检测到循环依赖: {current_node_id} 已在当前路径 {in_path}")
-
             node = self._workflow.get_node(current_node_id)
 
-            # 前置依赖检查
+            # 前置依赖检查（visited 确保前置节点已执行）
             for dep in node.depends_on:
-                if dep not in visited and dep not in in_path:
+                if dep not in visited:
                     raise WorkflowError(f"依赖未就绪: {node.node_id} 需要 {dep}")
-
-            in_path.add(current_node_id)
 
             # 步前 hook：Interceptor → Transformer → Observer
             if await self._run_before_step_hooks(ctx):
@@ -704,7 +737,6 @@ class WorkflowLoop(LoopStrategy):
             result = await node.execute(ctx, self._step_runner)
             node.result = result
             visited.add(current_node_id)
-            in_path.discard(current_node_id)
 
             # 步后 hook（重建 ctx，确保 after_step 看到本轮最新 messages）
             ctx = ctl.build_context()
@@ -735,32 +767,30 @@ class WorkflowLoop(LoopStrategy):
         """
         # 重置意图路由状态，避免多轮重用闭包变量
         self._workflow.reset_intent_results()
+        # 启动前静态检测无条件环；run_stream 以 error 事件返回而非抛异常
+        try:
+            self._workflow.assert_no_unconditional_cycles()
+        except WorkflowError as e:
+            yield {"type": "error", "error": str(e)}
+            return
 
         ctl = self._controller
         current_node_id: str | None = self._workflow.start_node_id
         visited: set[str] = set()
-        in_path: set[str] = set()  # 当前遍历路径，用于循环检测
 
         while current_node_id is not None:
             if ctl.status != RuntimeStatus.RUNNING:
                 break
 
-            # 循环依赖检测
-            if current_node_id in in_path:
-                yield {"type": "error", "error": f"检测到循环依赖: {current_node_id}"}
-                return
-
             node = self._workflow.get_node(current_node_id)
 
             yield {"type": "node_start", "node_id": current_node_id}
 
-            # 前置依赖检查
+            # 前置依赖检查（visited 确保前置节点已执行）
             for dep in node.depends_on:
-                if dep not in visited and dep not in in_path:
+                if dep not in visited:
                     yield {"type": "error", "error": f"依赖未就绪: {node.node_id} 需要 {dep}"}
                     return
-
-            in_path.add(current_node_id)
 
             # 步前 hook：Interceptor → Transformer → Observer
             if await self._run_before_step_hooks(ctx):
@@ -771,7 +801,6 @@ class WorkflowLoop(LoopStrategy):
             result = await node.execute(ctx, self._step_runner)
             node.result = result
             visited.add(current_node_id)
-            in_path.discard(current_node_id)
 
             yield {"type": "node_end", "node_id": current_node_id, "result": str(result)[:200]}
 

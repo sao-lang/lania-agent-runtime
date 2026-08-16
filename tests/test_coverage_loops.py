@@ -630,3 +630,80 @@ class TestWorkflowCoverage:
         wf.add_node(ConditionNode("route", condition_fn=lambda ctx: "x"))
         with pytest.raises(WorkflowError, match="分支目标节点"):
             wf.add_condition("route", {"x": "missing"})
+
+
+class TestWorkflowCycleDetection:
+    """Workflow 自环/无条件环检测测试。"""
+
+    async def test_self_loop_raises(self) -> None:
+        runtime = make_runtime("react")
+        wf = WorkflowDefinition()
+        wf.add_node(FixedNode("a", handler=lambda ctx: ""))
+        wf.add_edge("a", "a")
+        wf.start_node_id = "a"
+        loop = WorkflowLoop(
+            hooks=runtime._hooks,
+            step_runner=StubStepRunner(),
+            controller=runtime._controller,
+            workflow_definition=wf,
+        )
+        with pytest.raises(WorkflowError, match="无条件循环依赖"):
+            await loop.run(runtime._build_context())
+
+    async def test_fixed_two_node_cycle_raises(self) -> None:
+        runtime = make_runtime("react")
+        wf = WorkflowDefinition()
+        wf.add_node(FixedNode("a", handler=lambda ctx: ""))
+        wf.add_node(FixedNode("b", handler=lambda ctx: ""))
+        wf.add_edge("a", "b")
+        wf.add_edge("b", "a")
+        wf.start_node_id = "a"
+        loop = WorkflowLoop(
+            hooks=runtime._hooks,
+            step_runner=StubStepRunner(),
+            controller=runtime._controller,
+            workflow_definition=wf,
+        )
+        with pytest.raises(WorkflowError, match="无条件循环依赖"):
+            await loop.run(runtime._build_context())
+
+    async def test_run_stream_self_loop_error(self) -> None:
+        runtime = make_runtime("react")
+        wf = WorkflowDefinition()
+        wf.add_node(FixedNode("a", handler=lambda ctx: ""))
+        wf.add_edge("a", "a")
+        wf.start_node_id = "a"
+        loop = WorkflowLoop(
+            hooks=runtime._hooks,
+            step_runner=StubStepRunner(),
+            controller=runtime._controller,
+            workflow_definition=wf,
+        )
+        events = [e async for e in loop.run_stream(runtime._build_context())]
+        assert any("无条件循环依赖" in e.get("error", "") for e in events)
+
+    async def test_condition_loop_with_exit_allowed(self) -> None:
+        """经 ConditionNode 的环（分支可退出）应正常运行而不报错。"""
+        runtime = make_runtime("react")
+        executed: list[str] = []
+        state = {"visits": 0}
+
+        def route_condition(ctx: Any) -> str:
+            state["visits"] += 1
+            return "exit" if state["visits"] >= 2 else "back"
+
+        wf = WorkflowDefinition()
+        wf.add_node(FixedNode("a", handler=lambda ctx: executed.append("a")))
+        wf.add_node(ConditionNode("route", condition_fn=route_condition))
+        wf.add_node(FixedNode("exit", handler=lambda ctx: executed.append("exit")))
+        wf.add_edge("a", "route")
+        wf.add_condition("route", {"back": "a", "exit": "exit"})
+        wf.start_node_id = "a"
+        loop = WorkflowLoop(
+            hooks=runtime._hooks,
+            step_runner=StubStepRunner(),
+            controller=runtime._controller,
+            workflow_definition=wf,
+        )
+        await loop.run(runtime._build_context())
+        assert executed == ["a", "a", "exit"]
