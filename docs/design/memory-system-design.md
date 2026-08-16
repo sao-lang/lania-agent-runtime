@@ -1027,6 +1027,12 @@ class SemanticKnowledgeStore(ABC):
         """
 ```
 
+> ✅ **实现状态（2026-08-16）**：SemanticKnowledgeStore 已内置向量检索与图扩展检索。
+> - `search_nodes`：配置 `EmbeddingProvider`（默认纯 Python `HashEmbeddingProvider`）后按 embedding 余弦相似度排序，
+>   节点未嵌入时回退关键词匹配；`threshold` 仅约束向量路径。
+> - `ensure_embeddings()`：为缺失向量的节点批量生成向量。
+> - `search_related()` / `MemoryService.recall_graph()`：语义命中种子节点后沿边扩展关联知识。
+
 #### BehavioralPatternStore (行为模式)
 
 ```python

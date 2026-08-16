@@ -172,8 +172,8 @@ async def main():
 asyncio.run(main())
 ```
 
-> ⚠️ `HumanApprovalPlugin`、`BudgetPlugin`、`AuditPlugin` 等治理插件尚在规划中。
-> 当前可用的治理组件：`HumanApprovalInterceptor`、`SelfCritiqueHook`、`DualModelCritiqueHook`、`ReplanHook`。
+> ⚠️ `HumanApprovalPlugin` / `BudgetPlugin` / `AuditPlugin` 等插件化封装规划中（治理能力已内置为 Hook）。
+> 当前内置治理组件：`HumanApprovalInterceptor` / `SelfCritiqueHook` / `DualModelCritiqueHook` / `ReplanHook` / 预算记账。
 
 ### 模式 F：Loop 策略（3 种，Builder 一行切换）
 
@@ -354,6 +354,9 @@ runtime.intercept(HookPoint.BEFORE_LLM, my_threat_scanner, name="threat_scanner"
 
 ### Memory（记忆系统）
 
+> **向量/图检索**：L4 语义知识支持向量检索（内置纯 Python `HashEmbeddingProvider`，
+> 可替换为任意 `EmbeddingProvider` 实现）与图扩展检索（`MemoryService.recall_graph`）。
+
 ```python
 from src.runtime import AgentRuntime
 from src.runtime._types import HookPoint
@@ -424,7 +427,7 @@ runtime = (
 
 详情见 [`docs/design/session-component-design.md`](docs/design/session-component-design.md)。
 
-### Guardrails（治理组件，规划中）
+### Guardrails（治理组件）
 
 | 组件 | 说明 |
 |------|------|

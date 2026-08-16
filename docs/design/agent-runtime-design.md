@@ -1430,4 +1430,8 @@ runtime = AgentRuntime.builder().llm("gpt-4o").memory().build()
 
 # Phase 3：配置文件驱动
 runtime = AgentRuntime.from_config("agent.toml")
+
+> ✅ **实现状态（2026-08-16）**：Phase 2（Builder 构造）与 Phase 3（`from_config` 配置驱动）已实现；
+> Phase 1 的 PluggableComponent 协议已就绪（`runtime.use()` / `on_attach`），
+> 各模块的插件化适配（如 `AuditPlugin` 等治理插件封装）仍在规划中。
 ```

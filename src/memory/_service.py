@@ -12,6 +12,7 @@ import logging
 import time
 from typing import Any
 
+from src.memory._embedding import EmbeddingProvider
 from src.memory._persistence import MemoryPersistence
 from src.memory._stores import (
     BehavioralPatternStore,
@@ -23,6 +24,7 @@ from src.memory._stores import (
 from src.memory._types import (
     EpisodicMemoryEntry,
     RecallResult,
+    SemanticNode,
     StepContext,
     WorkingMemorySnapshot,
 )
@@ -112,6 +114,7 @@ class MemoryService:
         entity_persistence: MemoryPersistence | None = None,
         semantic_persistence: MemoryPersistence | None = None,
         pattern_persistence: MemoryPersistence | None = None,
+        embedding_provider: EmbeddingProvider | None = None,
     ) -> None:
         """
         初始化 MemoryService。
@@ -124,6 +127,8 @@ class MemoryService:
             entity_persistence: 可选，Layer 3（实体记忆）单独后端。
             semantic_persistence: 可选，Layer 4（语义知识）单独后端。
             pattern_persistence: 可选，Layer 5（行为模式）单独后端。
+            embedding_provider: 可选向量嵌入提供者，用于 L4 语义节点
+                的向量检索（不提供时 L4 检索回退关键词匹配）。
 
         未提供某一层的后端时，该层回退到默认 persistence。
         """
@@ -138,7 +143,10 @@ class MemoryService:
         self._working = WorkingMemoryStore(working_persistence or self._store)
         self._episodic = EpisodicMemoryStore(episodic_persistence or self._store)
         self._entity = EntityMemoryStore(entity_persistence or self._store)
-        self._semantic = SemanticKnowledgeStore(semantic_persistence or self._store)
+        self._semantic = SemanticKnowledgeStore(
+            semantic_persistence or self._store,
+            embedding_provider=embedding_provider,
+        )
         self._pattern = BehavioralPatternStore(pattern_persistence or self._store)
 
         # 全部涉及的后端（去重），close() 时逐一关闭
@@ -303,6 +311,35 @@ class MemoryService:
             entity_profile=entity_profile,
             concepts=concepts,
             tone_instruction=tone_instruction,
+        )
+
+    async def recall_graph(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        max_depth: int = 2,
+        relation: str | None = None,
+    ) -> list[tuple[SemanticNode, list[str]]]:
+        """图检索：语义匹配种子节点后沿边扩展关联知识。
+
+        基于 L4 语义知识图谱（节点 + 边），先按向量/关键词命中种子节点，
+        再沿关系扩展到邻居节点，返回 [(node, [relations, ...]), ...]。
+
+        Args:
+            query: 查询文本。
+            top_k: 种子节点数量。
+            max_depth: 邻居扩展深度。
+            relation: 可选的关系类型过滤。
+
+        Returns:
+            种子节点与其图邻居的去重列表。
+        """
+        return await self._semantic.search_related(
+            query,
+            top_k=top_k,
+            max_depth=max_depth,
+            relation=relation,
         )
 
     # ── 写入管线 ──

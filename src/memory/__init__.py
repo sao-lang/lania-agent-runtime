@@ -44,6 +44,10 @@ __all__ = [
     "RecallResult",
     "MemorySource",
     "ToolCallRecord",
+    # 向量嵌入
+    "EmbeddingProvider",
+    "HashEmbeddingProvider",
+    "cosine_similarity",
 ]
 
 
@@ -54,6 +58,8 @@ def __getattr__(name: str) -> Any:
     if name in __all__:
         if name == "MemoryService":
             mod = importlib.import_module("src.memory._service")
+        elif name in ("EmbeddingProvider", "HashEmbeddingProvider", "cosine_similarity"):
+            mod = importlib.import_module("src.memory._embedding")
         else:
             mod = importlib.import_module("src.memory._types")
         return getattr(mod, name)

@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, cast
 
+from src.memory._embedding import EmbeddingProvider, cosine_similarity
 from src.memory._persistence import MemoryPersistence
 from src.memory._stores._base import BaseStore
 from src.memory._types import SemanticEdge, SemanticNode
@@ -26,9 +27,20 @@ class SemanticKnowledgeStore(BaseStore):
     将 SemanticNode / SemanticEdge 的读写转化为 MemoryPersistence 的键值操作。
     """
 
-    def __init__(self, persistence: MemoryPersistence) -> None:
-        """初始化 SemanticKnowledgeStore。"""
+    def __init__(
+        self,
+        persistence: MemoryPersistence,
+        embedding_provider: EmbeddingProvider | None = None,
+    ) -> None:
+        """初始化 SemanticKnowledgeStore。
+
+        Args:
+            persistence: 满足 MemoryPersistence 接口的持久化实例。
+            embedding_provider: 可选向量嵌入提供者。提供后 search_nodes 会
+                按 embedding 余弦相似度排序（节点未嵌入时回退关键词匹配）。
+        """
         super().__init__(persistence)
+        self._embedding_provider = embedding_provider
 
     def _node_key(self, node_id: str) -> str:
         return f"sn:{node_id}"
@@ -177,6 +189,7 @@ class SemanticKnowledgeStore(BaseStore):
             匹配的节点列表。
         """
         query_lower = query.lower()
+        query_vec = await self._embed_text(query) if self._embedding_provider else None
         keys = await self._store.list_keys("sn:")
         matched: list[tuple[SemanticNode, float]] = []
 
@@ -186,6 +199,10 @@ class SemanticKnowledgeStore(BaseStore):
                 node = self._deserialize_node(data)
                 if node:
                     score = 0.0
+                    vector_hit = False
+                    if query_vec is not None and node.embedding:
+                        score += cosine_similarity(query_vec, node.embedding)
+                        vector_hit = True
                     if query_lower in node.name.lower():
                         score += 1.0
                     if query_lower in node.description.lower():
@@ -193,7 +210,8 @@ class SemanticKnowledgeStore(BaseStore):
                     for alias in node.aliases:
                         if query_lower in alias.lower():
                             score += 0.8
-                    if score > 0:
+                    # threshold 仅约束向量路径（关键词路径保持向后兼容）
+                    if score > 0 and (not vector_hit or score >= threshold):
                         matched.append((node, score))
 
         matched.sort(key=lambda x: x[1], reverse=True)
@@ -216,6 +234,82 @@ class SemanticKnowledgeStore(BaseStore):
             node.last_seen_at = datetime.now(timezone.utc)
             data = self._serialize_node(node)
             await self._store.put(self._node_key(node.id), data)
+
+    async def _embed_text(self, text: str) -> list[float] | None:
+        """用注入的提供者对文本编码。
+
+        Args:
+            text: 输入文本。
+
+        Returns:
+            向量；未配置提供者时返回 None。
+        """
+        if self._embedding_provider is None:
+            return None
+        return await self._embedding_provider.embed(text)
+
+    @staticmethod
+    def _node_text(node: SemanticNode) -> str:
+        """构造节点的可嵌入文本（名称 + 描述 + 别名）。"""
+        parts = [node.name, node.description, *node.aliases]
+        return " ".join(p for p in parts if p)
+
+    async def ensure_embeddings(self) -> int:
+        """为所有缺少 embedding 的节点生成向量。
+
+        Returns:
+            本次生成的向量数量。
+        """
+        if self._embedding_provider is None:
+            return 0
+        keys = await self._store.list_keys("sn:")
+        count = 0
+        for key in keys:
+            data = await self._store.get(key)
+            if data is None:
+                continue
+            node = self._deserialize_node(data)
+            if node is None or node.embedding is not None:
+                continue
+            embedding = await self._embed_text(self._node_text(node))
+            if embedding:
+                await self.update_embedding(node.id, embedding)
+                count += 1
+        return count
+
+    async def search_related(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        max_depth: int = 2,
+        relation: str | None = None,
+    ) -> list[tuple[SemanticNode, list[str]]]:
+        """图检索：先语义匹配种子节点，再沿边扩展关联节点。
+
+        Args:
+            query: 查询文本。
+            top_k: 种子节点数量。
+            max_depth: 邻居扩展深度。
+            relation: 可选的关系类型过滤。
+
+        Returns:
+            [(node, [relations, ...]), ...]——含种子节点与其图邻居，
+            按出现顺序去重。
+        """
+        seeds = await self.search_nodes(query, top_k=top_k)
+        result: dict[str, tuple[SemanticNode, set[str]]] = {}
+        for seed in seeds:
+            result.setdefault(seed.id, (seed, set()))
+            neighbors = await self.get_neighbors(
+                seed.id,
+                relation=relation,
+                max_depth=max_depth,
+            )
+            for node, rel in neighbors:
+                entry = result.setdefault(node.id, (node, set()))
+                entry[1].add(rel)
+        return [(node, sorted(rels)) for node, rels in result.values()]
 
     async def create_edge(
         self,
