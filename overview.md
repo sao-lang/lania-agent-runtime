@@ -17,6 +17,15 @@
 - **复盘结果：** 886 测试通过（875 → 886），覆盖率 96.27%（≥96），ruff check/format 零报错（仅预存 test_workflow_intent.py N817）；`_factory.py` 100% 覆盖。
 - **潜在风险：** ① `from_config` 的 `config.loop` 此前被静默忽略，现真正生效——含 strategy 但缺必需构造参数（如 workflow 缺 workflow_definition）会在 build 时报错而非忽略；② 保留参数名 hooks/step_runner/controller/router 不可通过 kwargs 覆盖（重复传参会 TypeError）；③ `LoopStrategyFactory.available()` 仅列出已注册名称，内置名称在首次 create 前不列出。
 
+#### 10. 文档：网关（接入层）设计方案
+
+- **时间：** 2026-08-17 00:10:00
+- **发起人：** user
+- **修改文件：**
+  - `docs/design/gateway-design.md` — 新增网关接入层设计方案 v0.1
+- **修改内容：** 定义网关作为 runtime 之外的应用层适配器：REST + SSE 接入（POST /v1/chat、/v1/chat/stream、审批 approve、会话快照、健康检查）、请求生命周期、会话映射（LRU + TTL）、与护栏的分工契约（审计单一出口、审批 resume 承接、限流分工）、错误码映射、GatewayConfig 与 YAML、可替换点（AgentGateway/AuthProvider/RuntimeFactory）、实施顺序、风险与决策 D1-D4。
+- **复盘结果：** N/A（纯设计文档，未编码）
+- **潜在风险：** 决策 D1-D4 待确认；审批 reject 需 runtime 扩展（D3-B）暂缓。
 #### 9. 文档：护栏方案落实为 v0.2
 
 - **时间：** 2026-08-16 23:30:00
