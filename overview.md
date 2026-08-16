@@ -1,5 +1,16 @@
 ### 2026-08-16
 
+#### 7. 文档：编排高级模式标记为暂缓/按需
+
+- **时间：** 2026-08-16 22:45:00
+- **发起人：** user
+- **修改文件：**
+  - `docs/design/orchestration-components-design.md` — §四 实现优先级状态标注（三循环策略 ✅，Critique / AgentTool / CritiqueInterceptor ⏸️）
+  - `docs/design/loop-strategy-design.md` — Multi-Agent 实现状态标注
+  - `docs/design/session-component-design.md` — Session Phase 3 标记暂缓
+- **修改内容：** 纯文档变更：确认三种循环策略（ReAct / PlanExecute / Workflow）已全部实现、构成编排核心；"编排高级模式"中未实现项（Critique 真实现 / AgentTool / CritiqueInterceptor / PlannerTool / CoT）统一标记为按需暂缓、不进入排期。
+- **复盘结果：** N/A（纯文档）。期间发现并修复一次 PowerShell 脚本误伤（编排文档 P→h 全局替换），已从 HEAD 恢复并重做编辑。
+- **潜在风险：** 无
 #### 6. WorkflowLoop max_iterations 安全网
 
 - **时间：** 2026-08-16 22:20:00

@@ -294,6 +294,9 @@ while current_node_id and not (paused/error/ended/cancelled):
 
 ### 3.1 Multi-Agent → 通过 Agent-as-tool 实现
 
+> ⏸️ **实现状态（2026-08-16）**：Agent-as-tool（AgentTool / SubAgentSpec）暂缓实现、按需开启；
+> 当前三种 LoopStrategy（ReAct / PlanExecute / Workflow）已覆盖单 Agent 编排能力。
+
 **设计依据**: 设计文档 §九-4 "Agent-as-tool 是 Execute 的递归"
 
 ```

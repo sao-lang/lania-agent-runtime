@@ -468,23 +468,26 @@ Critique拦截  ❌      ✅        ✅       ❌      Hook（Intercept）
 ## 四、实现优先级
 
 ```
-Phase 1（核心）:
+Phase 1（核心）: ✅ 已实现
   └── LoopStrategy 框架 (base.py + factory)
   └── ReActLoop（当前 _step_loop 迁移）
-  └── CoT（LLMExecutorConfig.reasoning_instruction）
+  └── CoT（LLMExecutorConfig.reasoning_instruction）⏸️ 未实现（按需）
 
-Phase 2（规划能力）:
+Phase 2（规划能力）: ✅ 已实现
   └── PlanExecuteLoop（含 Planner + Replan 内置）
-  └── PlannerTool（可选，供 ReAct 使用）
+  └── PlannerTool（可选，供 ReAct 使用）⏸️ 未实现（按需）
 
-Phase 3（质量保障）:
-  └── SelfCritiqueHook（单模型自我批评）
-  └── DualModelCritiqueHook（双模型双重验证）
+Phase 3（质量保障）: ⏸️ 暂缓（按需开启）
+  └── SelfCritiqueHook（单模型自我批评）⚠️ 现有为占位实现（仅记录元信息，未真正调用审查模型）
+  └── DualModelCritiqueHook（双模型双重验证）⚠️ 同上
 
-Phase 4（高级模式）:
-  └── WorkflowLoop（DAG 编排）
-  └── AgentTool（Multi-Agent 支持）
-  └── CritiqueInterceptor（安全拦截）
+Phase 4（高级模式）: 部分实现
+  └── WorkflowLoop（DAG 编排）✅ 已实现（含无条件环检测 + max_iterations 安全网）
+  └── AgentTool（Multi-Agent 支持）⏸️ 暂缓（按需开启）
+  └── CritiqueInterceptor（安全拦截）⏸️ 暂缓（按需开启）
+
+> **实现状态（2026-08-16）**：三种循环策略（ReAct / PlanExecute / Workflow）已全部实现，
+> 构成编排核心；Phase 3 质量保障与 AgentTool / CritiqueInterceptor 属于可选增强，当前按需暂缓、不进入排期。
 ```
 
 ---

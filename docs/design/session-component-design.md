@@ -641,7 +641,7 @@ SESSION_RESUME (Transform)
 2. [x] 消息分块（`ssh:` 前缀）与历史裁剪策略
 3. [x] `list_user_sessions` 分页 / 状态过滤
 
-### Phase 3 — 高级
+### Phase 3 — 高级（⏸️ 暂缓，按需开启）
 
 1. 跨会话检索打通：`ContextManager` 消费 `cross_session_memory`，Memory 复用 `ep_user:` / `recall_user()`
 2. 会话级权限 / 审计 / 脱敏（与治理 Hook 组合）
